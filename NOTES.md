@@ -14,11 +14,67 @@ tests and source-patch checks passed. The owner supplied their fork
 https://github.com/arbuxiktech/ios-surya to push the Poco branch and run the macOS
 workflow. Remote `poco` points there; main matches the pinned upstream revision.
 GitHub CLI was downloaded from its official release, SHA256 verified, and kept
-under ignored research/gh. Browser device login is pending; no push/CI yet.
-Never record tokens or temporary login codes here. No kernel/device success claimed.
+under ignored research/gh. Login completed as arbuxiktech (Windows keyring).
+Owner-authorized branch codex/surya-port and main were pushed at d4c25df. Fork
+workflow registration required the first main update. A duplicate dispatch
+canceled the initial push run 39300188451 through concurrency; both were stopped
+and the single manual run 39300223403 was rerun. Current run:
+https://github.com/arbuxiktech/ios-surya/actions/runs/39300223403
+Inputs: macos_version=13.5, machine_config=SURYA, DEVELOPMENT, keep_going=true.
+Status: SUCCESS, build job 8m8s. All numbered patches 0001-0082 applied.
+Kernel SHA256 c880b5b2a781a4ccdac6d8fe7a1a417f6bc2cb1b3e32af5ed73d40e4106e2e55
+verified, plain arm64 and SURYA target marker verified. Kernel and linker map:
+`xnu/out-surya-first/`; full log `research/ci-surya-first.log`; compiled source
+fixture `research/ci-surya-first-tree/extracted/` (all ignored).
+Never record tokens or temporary login codes here. Kernel compile success only;
+no device boot success claimed.
 
-- Initial source port, NOT a demonstrated iOS boot on Poco. No device commands,
-  temporary boots, partition writes or root image installation performed here.
+### Latest owner steering and real userspace work
+
+- Owner explicitly requested NO QEMU boot test. Do not retry kernel/iOS QEMU
+  tests. Earlier attempts exited before executing the kernel: WSL NTFS socket
+  error, then missing efi-virtio.rom. No guest kernel result was obtained.
+- Owner has no stock files. Official Xiaomi Global V14.0.2.0.SJGMIXM recovery
+  ZIP was accessed through bounded HTTPS Range reads, using the URL listed by
+  LineageOS. Extracted boot.img, dtbo.img and metadata, ZIP CRC verified.
+  Metadata says pre-device=surya. Source/member SHA256 manifest and boot header
+  are under ignored research/stock-surya/. This is stock reference, not a dump
+  of the current ColorOS port. No firmware was installed.
+- Owner asked about real userspace. Answered accurately that only test PID 1
+  existed, then began preparing actual iPhone X iOS 16.7.16 / 20H392 userspace.
+  Apple CDN source and selected paths from its BuildManifest are recorded under
+  ignored research/ios16-userland/. OS, SystemOS, AppOS and D22AP DeviceTree
+  downloaded with ZIP member CRC verified. Entire IPSW was NOT downloaded or
+  signature/hash verified as a whole. D22AP product ADT unwrapped at
+  research/ipsw-x/d22ap.adt (61 product properties, not committed).
+- Real iPhone X iOS 16.7.16 / 20H392 root assembly is COMPLETE under
+  /root/surya-userland/ios16-root. prepare-ios-userland.py preserves numeric
+  owners/hardlinks, merges three Apple roots, applies upstream userland tweaks
+  and checks launchd/dyld/backboardd/SpringBoard plus 44 arm64 dyld cache files.
+  Fresh image has no mobileactivationd container, so upstream data_ark seeding
+  was skipped. Activation and UI are not demonstrated.
+- pack-ios-userland.sh created a NEW 16 GiB local HFSX image using filesystem
+  tooling (libguestfs; not an iOS/XNU boot test). Final fsck says volume OK;
+  four executable hashes were verified by reading them back from the image.
+  Windows copy: research/userland-ready/ios16-surya-root.img; expected SHA256
+  bcba3b77a323f2f5d114c3a5689e789cc4525c15a04b5a7979b9066494fb9ace.
+  Apple components, images and manifests remain ignored, never committed.
+- SURYA UFS remains compile-time disabled. Prepared userspace is not installed
+  or boot-tested. Storage bring-up and an approved installation plan remain.
+- Added live FDT RAM coverage/fixed reservation guard before any kernel segment
+  copy. Stock DTB RAM cells are placeholders; ABL must populate them at boot.
+  Candidate RAM contract is 0x100000000 + 0x20000000, subject to live guard;
+  this is not proof of firmware/XPU restrictions absent from FDT.
+- All 17 host tests passed in WSL, including compiled-C FDT parser tests.
+  Native shim compiled; stock DTB/payload/header unpack checks passed.
+- Owner reported Fastboot. Exactly one device detected. Temporarily booted
+  shim/out/surya/shim-boot.img, SHA256
+  c10afcb94b40fc9fa48e2d3c9e5e492b64f3f480579bb0eac79829bf2370534e.
+  fastboot boot: Sending OKAY (0.483s), Booting OKAY (5.095s), exit 0.
+  This uses XNU + static test PID1, not Apple launchd. SCREEN RESULT PENDING.
+  No partitions flashed or erased; fastboot transfer is not kernel boot proof.
+  Next: inspect actual phone screen; if RAM guard rejects, obtain live RAM map.
+
 - Patch 0082 adds machine_config=SURYA, shares ARM64_BOARD_CONFIG_SWEET for the
   SoC implementation and adds ARM64_BOARD_CONFIG_SURYA for physical-board policy.
   Includes the final upstream config and portable-provider include flags;

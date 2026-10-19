@@ -4,7 +4,7 @@ Adaptation of [ios-sweet](https://github.com/dipa-studio/ios-sweet), pinned at
 `11da58bd050672960c0a83b5bef2176047eea479`. Target: **Poco X3 NFC (`surya`),
 SM7150 / Snapdragon 732G**. Other Poco X3 variants are not targets.
 
-**Initial source port and host builds; no iOS boot demonstrated on surya.**
+**SURYA kernel compiles successfully; no iOS boot demonstrated on surya.**
 Upstream Redmi Note 10 Pro results belong to that device. Its original
 [README](README.sweet.md) is preserved as reference; its userdata-erasing
 installation steps are not the procedure for this Poco port.
@@ -25,6 +25,8 @@ The previous independent Poco project is suspended and preserved at
   Storage writes and persistent logging are not reachable in this target.
 - Separate Poco shim output under `shim/out/surya/`. Payload failure halts instead
   of starting the Redmi UFS probe. Segment bounds are checked before RAM copies.
+- A live-FDT check requires RAM coverage and rejects fixed reservation overlap
+  before copying kernel segments.
 - Packaging checks board identity, kernel target, plain arm64, RAM bounds,
   command line, entry point and required test RAM disk.
 
@@ -38,8 +40,9 @@ The build scripts do not invoke adb/fastboot or write any phone partition.
 
 1. Build `xnu.yml` on a macOS host or your own GitHub fork with
    `machine_config=SURYA`, release 13.5, DEVELOPMENT. Download
-   `kernel.development.surya`. No CI has been dispatched for this adaptation;
-   the complete SURYA kernel has not yet been compiled.
+   `kernel.development.surya`. The first complete SURYA build
+   [passed on GitHub Actions](https://github.com/arbuxiktech/ios-surya/actions/runs/39300223403);
+   all 82 numbered patches applied, artifact SHA256 and plain arm64 verified.
 2. Obtain this Poco's stock boot DTB and actual RAM/reserved-memory map, including
    DTBO fixups. Choose a contiguous 32 MiB aligned range outside every firmware/XPU
    reservation. A generic UEFI compatibility DTB is reference material, not proof
@@ -65,6 +68,18 @@ BOARD=surya bash shim/build.sh --raw
 
 Output `shim/out/surya/Image` is **not a complete bootable iOS image**.
 
+## Prepared userspace
+
+A local 16 GiB HFSX image contains real iPhone X iOS 16.7.16 / 20H392
+userspace: launchd, dyld, backboardd, SpringBoard and arm64 dyld caches.
+`tools/prepare-ios-userland.py` assembles the roots and checks the executables;
+`tools/pack-ios-userland.sh` packages a new local image. Filesystem checks passed
+and executable hashes matched after read-back. Apple artifacts remain untracked.
+
+This image has not booted on the Poco. UFS remains disabled; activation, display
+and input support still need physical validation. No iOS/XNU QEMU boot tests
+will be run under the current owner's preference.
+
 ## Verification and remaining work
 
 Run `python3 -m unittest discover -s tests -v` and
@@ -72,14 +87,15 @@ Run `python3 -m unittest discover -s tests -v` and
 locally. Patch 0082 applies to the relevant sources after patches 0001–0081;
 this is not a full kernel compile or runtime test.
 
-Next: full SURYA kernel compilation; authoritative Poco DTB/memory contract;
+Next: authoritative Poco DTB/memory contract;
 temporary kernel/RAM-disk test; Poco panel refresh, touch, keys and power details;
-read-only storage bring-up; separately approved root-storage plan and iOS userland.
+read-only storage bring-up; separately approved installation of the prepared iOS userspace.
 Do not reuse Redmi GPIO/rail values, partition offsets or installation approvals.
 
 Earlier Poco UEFI diagnostics observed framebuffer `0x9c000000`, 1080×2400,
 4320-byte stride. This agrees with the inherited console layout but does not
 establish stock ABL panel continuity or LCD refresh behavior.
 
-No phone was accessed or modified during this adaptation. See [NOTES.md](NOTES.md)
-for the active handoff and upstream history.
+The first temporary native test image was accepted by Fastboot; its screen
+result is pending. No partitions have been flashed or erased. See
+[NOTES.md](NOTES.md) for the active handoff and upstream history.

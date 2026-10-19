@@ -119,6 +119,14 @@ const char *loader_boot(uintptr_t dtb)
 	}
 	if (!entry_loaded)
 		return "entry outside loaded segments";
+#if SURYA_BRINGUP
+	int ram_check = fdt_check_ram(dtb, p->phys_base, p->mem_size);
+	if (ram_check != 1) {
+		con_hex("RAM CHECK", (uint64_t)(int64_t)ram_check);
+		return "live FDT does not approve kernel RAM range";
+	}
+	con_str("RAM CHECK", "live FDT RAM and fixed reservations accepted");
+#endif
 
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
 	con_hex2("PHYS", "base=", p->phys_base, "size=", p->mem_size);
