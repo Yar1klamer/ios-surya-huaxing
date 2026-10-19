@@ -9,6 +9,14 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+Latest source milestone: 9c370c9 (userspace assembly + live RAM guard), then
+98ed9c5 (native panic evidence + patch 0083). Both pushed to owner fork main
+and codex/surya-port. Diagnostic CI run 39306668551 is in progress:
+https://github.com/arbuxiktech/ios-surya/actions/runs/39306668551
+Owner returned phone to Fastboot and replied ready for the diagnostic temporary
+boot. No repeat authorization needed for that test; never flash partitions.
+
+
 Implementation committed locally as `13d0eff`; handoff commit `43f5492`. Host
 tests and source-patch checks passed. The owner supplied their fork
 https://github.com/arbuxiktech/ios-surya to push the Poco branch and run the macOS
