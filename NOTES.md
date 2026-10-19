@@ -14,14 +14,20 @@ Latest source milestone: 9c370c9 (userspace assembly + live RAM guard), then
 and codex/surya-port. Diagnostic CI run 39306668551 PASSED (8m21s):
 https://github.com/arbuxiktech/ios-surya/actions/runs/39306668551
 Owner returned phone to Fastboot and replied ready. Diagnostic native temporary
-boot completed: Sending OKAY 0.488s, Booting OKAY 5.094s, exit 0. SCREEN PENDING.
+boot completed: Sending OKAY 0.488s, Booting OKAY 5.094s, exit 0. SCREEN RECEIVED: framebuffer map exhausts early I/O PTE coverage.
 Kernel SHA256 865b589b2b8b75c23623991956f05e9177d3a8001410fca7c6cf8370cc1b9fbb;
 plain arm64, artifact checksum and both diagnostic strings verified.
 Boot image SHA256 b533f4a56dc236453264cb6a613d6da4eb4646807837b32a0c8c47ee461828e0;
 payload bytes verified inside boot image. Archived ignored image/manifest at
 research/native-tests/mapdiag/. First test archived at first-pmap-panic/.
-No partitions flashed. Next: obtain photo containing SURYA early io_map and
-SURYA pmap_map_bd addresses. Do not claim diagnostic test fixed anything yet.
+No partitions flashed. Photo codex-clipboard-1667e75b-183d-4acd-ab10-10956ad03b43
+shows early io_map base VA 0xfffffe000b700000, physical 0x9c000000,
+size 0x9e4000, flags 0x7; pmap fails at VA 0xfffffe000c000000. This is the
+video_console initialize_screen framebuffer mapping after serial fbcon.
+Patch 0084 reserves at least 64 MiB early-I/O VA page-table coverage on SURYA;
+512 MiB RAM target's inherited RAM-scaled budget was about 32 MiB. This
+allocates page tables only, not arbitrary physical/MMIO ranges. Existing
+pmap bounds failure stays active. Fix must be compiled and tested physically.
 
 
 Implementation committed locally as `13d0eff`; handoff commit `43f5492`. Host
