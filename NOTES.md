@@ -18,9 +18,11 @@ Prepared clean GUI boot image:
 - Updated tools/mksurya-apple-root.py with --gui option.
 - Added test_apple_gui_payload_keeps_exact_storage_policy to tests/test_surya.py (25 passed).
 - Built clean GUI payload shim/out/surya/apple-gui-payload.bin (16590176 bytes) and packaged boot image research/apple-root-ready/boot-apple-gui.img (20058112 bytes, SHA256: 7b50e56a716cce4030bea4d08630f84d976c2303f19fcb3c6dac4d5581009f5a).
-- Clean GUI boot image sent via fastboot boot: Sending OKAY 0.485s, Booting OKAY 5.093s, exit 0, total 5.591s.
-- No filesystem reflash or partition writes. Boot log at research/apple-root-ready/boot-apple-gui.log.
-- SCREEN RESULT PENDING: waiting for user confirmation of clean iOS Lock Screen without console log overlay.
+- Built and verified Novatek NT36672C SPI touch driver patch 0087 for Poco X3 NFC (surya) on GENI SE0 (0x00880000).
+- CI run 39330665645 compiled successfully; kernel SHA256: 75e30e39d98c6632f6e53a3a465856ff6ae89fe4ee16f43977e553088f51545b. Verified strings 'NT36672C', 'SURYA TOUCH: SE0', etc. present.
+- Updated APPLE_GUI_CMDLINE to sweettouch=1. Built new boot-apple-gui.img (SHA256: 6e07ed749a605977ea27265d9d7025241c1fe66487f118f80a7032a3ee1bb114, 20058112 bytes).
+- Boot image booted via fastboot boot on phone 9eab9f27 (Sending OKAY 0.485s, Booting OKAY 5.093s, exit 0, total 5.589s).
+- SCREEN RESULT PENDING: waiting for user confirmation whether touchscreen responds to touch/swipe on the iOS Lock Screen.
 OWNER APPROVAL RECEIVED: user replied "yes" to the explicit request to replace
 userdata with the verified Apple filesystem and temporarily boot Apple launchd,
 after disclosure that ColorOS apps/settings/personal files are replaced and no
