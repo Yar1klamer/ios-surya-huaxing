@@ -9,6 +9,24 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+Native read-only UFS test PASSED: photo
+codex-clipboard-1eb8a29f-e005-4984-ab86-bf5a05490e55.png shows status=0,
+userdata LUN 0 first block 0x384a18 (3688984), 103245 MiB, read-only, DMA
+0x103954000; test PID1 remains alive. Bounds match Android evidence.
+Owner replied ready in Fastboot for a larger-RAM READ-ONLY regression test.
+Preparing patch 0086: same default read-only probe plus separate bounded Apple
+root profile. Read/write requests and flush allowed only after native GPT
+bounds match explicit ADT contract and ufsrw=1; only the 16 GiB image window
+is advertised, no partition tail. No input/USB/PMIC/persistent-log activation.
+Avoid repeated UFS initialization after an already-mounted UFS root.
+The pure C command/bounds policy compiled and tested on host across all 256
+opcodes in read-only and writable states; 22 host tests and 86-patch validation
+pass. Apple-root payload builder requires the new kernel marker, correct
+command line, native storage proof, real product identity, no substituted test
+RAM disk and >=2 GiB RAM. Proposed root/test RAM 0x100000000 + 0xfc000000.
+No Apple-root image has been booted; no install or erase authorized yet.
+
+
 Owner explicitly requests Apple launchd and daemons next. Android ADB hardware
 collection completed without root (su absent). ROM identity is OP60FFL1/PLK110,
 but soc0 machine IDP SDMMAGPIE, soc_id 365, platform sm6150 and live UFS data
@@ -27,7 +45,7 @@ SCSI layer permits TEST UNIT READY and READ(10) only, forbids data-out and all
 other opcodes; su.writable forcibly false regardless of boot args. No PMIC,
 input, USB, sampling or persistent logging started from the probe. Uses ABL
 host state, aborts if controller not ready/outstanding requests/no 64-bit DMA.
-18 host tests and 85-patch repo validation pass. Native probe image booted through Fastboot; SCREEN RESULT PENDING.
+18 host tests and 85-patch repo validation pass. Native probe image booted through Fastboot; SCREEN CONFIRMED: status=0, userdata first block 0x384a18, 103245 MiB, read-only; test PID1 heartbeats continue.
 Kernel SHA256 9fe6453f2b97b26bc037423a984c98d2265ef8a0745930ca947b9e327f8bb270
 verified against artifact checksum, plain arm64 and diagnostic strings.
 Boot image SHA256 3a3e5cf94c5c6ad70e17e95f16985357acd02ae6b05830762915b3aef0b5def6;

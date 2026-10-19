@@ -16,6 +16,11 @@ import mkadt
 CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam '
            '-noprogress rd=md0 sweettouch=0 sweetkeys=0 sweetusb=0 '
            'sweetbattery=0 sweetlog=0 ufsrw=0 rootrw=0')
+APPLE_CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam '
+                 '-noprogress rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 '
+                 'ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 '
+                 'launchd_unsecure_cache=1 wdt=-1 sweettouch=0 sweetkeys=0 '
+                 'sweetusb=0 sweetbattery=0 sweetlog=0')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 
@@ -39,8 +44,10 @@ def validate_memory(base, size):
         raise ValueError('RAM overlaps the boot framebuffer')
 
 
-def build(base, size, *, seed=None, qemu=False, product=None, storage=None):
+def build(base, size, *, seed=None, qemu=False, product=None, storage=None, apple_root=False):
     validate_memory(base, size)
+    if apple_root and (not storage or not product or size < 0x80000000):
+        raise ValueError('Apple root requires storage proof, product ADT and >=2 GiB RAM')
     root = mkadt.build(seed=seed, qemu=qemu, product_path=None)
     setprop(root, 'compatible', mkadt.cstr('D22AP') + mkadt.cstr('iPhone10,3') +
             mkadt.cstr('xiaomi,surya') + mkadt.cstr('qcom,sm7150') + mkadt.cstr('AppleARM'))
@@ -67,6 +74,18 @@ def build(base, size, *, seed=None, qemu=False, product=None, storage=None):
             ('reg', mkadt.u64(c['base'], c['size'])),
             ('surya-read-only', mkadt.u32(1)),
         ]))
+    if apple_root:
+        if storage.get('native_read_verified') is not True:
+            raise ValueError('Apple root requires a successful native storage probe')
+        layout = storage['root_layout']
+        first, count, blocks = (layout[k] for k in ('first_block', 'block_count', 'image_blocks'))
+        if not (0 < first <= 0xffffffff and 2 <= blocks <= count
+                and first + blocks - 1 <= 0xffffffff):
+            raise ValueError('invalid measured root volume bounds')
+        setprop(chosen, 'surya-apple-root', mkadt.u32(1))
+        ufs = child(root, 'sweet-ufs')
+        setprop(ufs, 'surya-read-only', mkadt.u32(0))
+        setprop(ufs, 'surya-root-contract', mkadt.u64(first, count, blocks))
     if product:
         props = mkadt.d22ap_product(str(product))
         root.children = [n for n in root.children
@@ -76,7 +95,7 @@ def build(base, size, *, seed=None, qemu=False, product=None, storage=None):
 
 
 def validate_payload(blob):
-    """Reject cross-board, out-of-bounds or writable payloads before packaging."""
+    """Validate the isolated RAM-disk or explicit bounded Apple-root boot profile."""
     import mkpayload
     if len(blob) < mkpayload.SEG_TABLE or blob[:8] != b'SWEETXNU':
         raise ValueError('missing XNU payload header')
@@ -92,21 +111,36 @@ def validate_payload(blob):
         raise ValueError('payload is not for surya')
     ufs_nodes = [n for n in root.children if n.name == 'sweet-ufs']
     chosen_props = dict((k, v) for k, f, v in child(root, 'chosen').props)
+    apple_root = chosen_props.get('surya-apple-root') == mkadt.u32(1)
     probe = chosen_props.get('surya-ufs-probe')
     if probe is not None or ufs_nodes:
         if probe != mkadt.u32(1) or len(ufs_nodes) != 1:
             raise ValueError('incomplete read-only storage probe contract')
         ufs_props = dict((k, v) for k, f, v in ufs_nodes[0].props)
         if (ufs_props.get('reg') != mkadt.u64(0x1d84000, 0x3000)
-                or ufs_props.get('surya-read-only') != mkadt.u32(1)):
+                or ufs_props.get('surya-read-only') != mkadt.u32(0 if apple_root else 1)):
             raise ValueError('invalid SURYA storage probe mapping')
+        contract = ufs_props.get('surya-root-contract')
+        if apple_root:
+            if not contract or len(contract) != 24 or size < 0x80000000:
+                raise ValueError('Apple root is missing bounds or sufficient RAM')
+            first, volume_count, blocks = struct.unpack('<3Q', contract)
+            if not (0 < first <= 0xffffffff and 2 <= blocks <= volume_count
+                    and first + blocks - 1 <= 0xffffffff):
+                raise ValueError('Apple root bounds invalid')
+            if not any(n.name == 'product' for n in root.children):
+                raise ValueError('Apple product identity missing')
+        elif contract:
+            raise ValueError('RAM-disk probe cannot arm root writes')
+    if apple_root and not ufs_nodes:
+        raise ValueError('Apple root has no storage controller')
     if mkpayload.adt_dram(blob[off:off + length]) != (base, size):
         raise ValueError('RAM contract mismatch')
     # Validate the same contract used by ADT generation, including address limits.
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
-    if cmd != CMDLINE:
-        raise ValueError('first-stage surya payload requires the RAM-disk command line')
+    if cmd != (APPLE_CMDLINE if apple_root else CMDLINE):
+        raise ValueError('command line does not match the SURYA boot profile')
     ranges = []
     table_end = mkpayload.SEG_TABLE + count * 32
     for i in range(count):
@@ -126,6 +160,10 @@ def validate_payload(blob):
         raise ValueError('ADT/boot arguments exceed RAM')
     memory_map = child(child(root, 'chosen'), 'memory-map')
     rd = dict((k, v) for k, f, v in memory_map.props).get('RAMDisk')
+    if apple_root:
+        if rd:
+            raise ValueError('Apple root profile cannot substitute a test RAM disk')
+        return dict(board='surya', stage='apple-root', base=hex(base), size=hex(size), cmdline=cmd)
     if not rd or len(rd) != 16:
         raise ValueError('RAM-disk root is required')
     rd_pa, rd_size = struct.unpack('<QQ', rd)
@@ -141,20 +179,22 @@ def main():
     p.add_argument('--dram-size', type=lambda x: int(x, 0), required=True)
     p.add_argument('--memory-evidence', type=Path, required=True, help='local DT/map source; recorded, never inferred from sweet')
     p.add_argument('--product-adt', type=Path)
+    p.add_argument('--apple-root', action='store_true', help='prepare bounded writable Apple root profile; do not boot before approved installation')
     p.add_argument('--qemu', action='store_true')
     p.add_argument('--storage-evidence', type=Path, help='live Poco controller evidence; read-only probe only')
     a = p.parse_args()
     if not a.memory_evidence.is_file():
         p.error('--memory-evidence must name an existing local source file')
     storage = json.loads(a.storage_evidence.read_text(encoding='utf-8')) if a.storage_evidence else None
-    root = build(a.dram_base, a.dram_size, qemu=a.qemu, product=a.product_adt, storage=storage)
+    root = build(a.dram_base, a.dram_size, qemu=a.qemu, product=a.product_adt, storage=storage, apple_root=a.apple_root)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_bytes(adt.serialize(root))
     a.out.with_suffix('.json').write_text(json.dumps(dict(board='surya', upstream=UPSTREAM,
         memory_evidence=str(a.memory_evidence.resolve()),
         memory_evidence_sha256=hashlib.sha256(a.memory_evidence.read_bytes()).hexdigest(),
         memory_verified_on_device=False,
-        kernel_target='SURYA', qemu=a.qemu, command_line=CMDLINE,
+        kernel_target='SURYA', qemu=a.qemu, command_line=APPLE_CMDLINE if a.apple_root else CMDLINE,
+        apple_root=a.apple_root,
         storage_probe=bool(storage),
         storage_evidence_sha256=hashlib.sha256(a.storage_evidence.read_bytes()).hexdigest() if storage else None,
         status='generated, untested on hardware'), indent=2) + '\n')

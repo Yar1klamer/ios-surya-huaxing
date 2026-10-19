@@ -1,0 +1,108 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -38,6 +38,9 @@
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
+ #include <libkern/libkern.h>
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++#include "surya_ufs_policy.h"
++#endif
+ #include <machine/atomic.h>
+ 
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+@@ -149,8 +152,8 @@
+ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ {
+ #if defined(ARM64_BOARD_CONFIG_SURYA)
+-	/* Native bring-up cannot submit write or other state-changing commands. */
+-	if (write || cdb_len == 0 || (cdb[0] != 0x00 && cdb[0] != 0x28)) {
++	/* The RAM-disk probe remains read-only; root writes need a bounded contract. */
++	if (cdb_len == 0 || !surya_ufs_command_allowed(cdb[0], write, su.writable)) {
+ 		return EROFS;
+ 	}
+ #endif
+@@ -621,8 +624,19 @@
+ 	if (reg[0] != 0x01d84000 || reg[1] != 0x3000 ||
+ 	    SecureDTGetProperty(node, "surya-read-only", (void const **)&read_only,
+ 	    &read_only_size) != kSuccess || read_only_size != sizeof(*read_only) ||
+-	    *read_only != 1) {
++	    (*read_only != 0 && *read_only != 1)) {
+ 		printf("SURYA UFS: controller contract rejected\n");
++		return ENXIO;
++	}
++#endif
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	const uint64_t *root_contract = NULL;
++	unsigned int root_contract_size = 0;
++	bool root_mode = (*read_only == 0);
++	if (root_mode && (SecureDTGetProperty(node, "surya-root-contract",
++	    (void const **)&root_contract, &root_contract_size) != kSuccess ||
++	    root_contract_size != 3 * sizeof(uint64_t))) {
++		printf("SURYA UFS: missing root volume bounds\n");
+ 		return ENXIO;
+ 	}
+ #endif
+@@ -665,6 +679,18 @@
+ 		return error;
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	if (root_mode) {
++		if (strcmp(want, "userdata") != 0 || rw != 1 ||
++		    !surya_ufs_root_range(su.first_block, su.nblocks,
++		    root_contract[0], root_contract[1], root_contract[2])) {
++			printf("SURYA UFS: root partition bounds rejected\n");
++			return ENXIO;
++		}
++		/* Expose only the installed image, never the unused partition tail. */
++		su.nblocks = root_contract[2];
++	}
++#endif
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
+ 	if (su.bmajor < 0) {
+ 		return ENXIO;
+@@ -678,7 +704,8 @@
+ 	devfs_make_node(makedev(su.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rufsroot0");
+ 	/* Only now, with the partition bounds known, can writes be allowed. */
+ #if defined(ARM64_BOARD_CONFIG_SURYA)
+-	su.writable = false; /* Boot arguments cannot enable physical disk writes. */
++	su.writable = root_mode; /* Only a validated root contract arms writes. */
++	if (root_mode) printf("SURYA: bounded Apple root writes armed\n");
+ #else
+ 	su.writable = (rw != 0);
+ #endif
+@@ -861,6 +888,7 @@
+ void
+ surya_ufs_probe(void)
+ {
++	if (su.ready) return; /* Root already initialized before mountroot. */
+ 	int error = sweet_ufs_init();
+ 	printf("SURYA UFS PROBE: status=%d; disk writes disabled\n", error);
+ }
+diff --git a/bsd/dev/surya_ufs_policy.h b/bsd/dev/surya_ufs_policy.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_ufs_policy.h
+@@ -0,0 +1,21 @@
++/* SURYA native storage command and root-volume policy, shared with host tests. */
++#ifndef SURYA_UFS_POLICY_H
++#define SURYA_UFS_POLICY_H
++static inline int
++surya_ufs_command_allowed(unsigned opcode, int data_out, int writable)
++{
++	if (data_out) return writable && opcode == 0x2a; /* WRITE(10) */
++	return opcode == 0x00 || opcode == 0x28 || /* TEST UNIT READY, READ(10) */
++	    (writable && opcode == 0x35); /* SYNCHRONIZE CACHE(10) */
++}
++static inline int
++surya_ufs_root_range(unsigned long long first, unsigned long long count,
++    unsigned long long expected_first, unsigned long long expected_count,
++    unsigned long long image_blocks)
++{
++	/* WRITE(10) has a 32-bit LBA; every advertised block must fit. */
++	return first == expected_first && count == expected_count && first != 0 &&
++	    count != 0 && image_blocks >= 2 && image_blocks <= count &&
++	    first <= 0xffffffffULL && image_blocks - 1 <= 0xffffffffULL - first;
++}
++#endif

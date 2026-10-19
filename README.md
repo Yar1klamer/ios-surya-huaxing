@@ -23,9 +23,9 @@ The previous independent Poco project is suspended and preserved at
   QEMU timer map. No Redmi RAM size is selected automatically.
 - SURYA kernel refuses unverified Redmi touch/PMIC/USB/UFS routines at their
   entry points, including the L11C rail vote, regardless of copied boot arguments.
-  Storage writes and persistent logging are not reachable in this target.
+  The RAM-disk profile disables disk writes and persistent logging.
   An explicit measured-controller ADT can enable a read-only UFS probe while
-  retaining the working RAM-disk root; its native result is pending.
+  retaining the working RAM-disk root; native GPT identification passed on the Poco.
 - Separate Poco shim output under `shim/out/surya/`. Payload failure halts instead
   of starting the Redmi UFS probe. Segment bounds are checked before RAM copies.
 - A live-FDT check requires RAM coverage and rejects fixed reservation overlap
@@ -72,6 +72,14 @@ BOARD=surya bash shim/build.sh --raw
 ```
 
 Output `shim/out/surya/Image` is **not a complete bootable iOS image**.
+
+## Apple-root boot profile
+
+Patch 0086 adds a separate bounded writable-root profile, prepared with
+`tools/surya.py --apple-root` and `tools/mksurya-apple-root.py`.
+It checks the measured userdata partition bounds and exposes only the installed
+image window. The RAM-disk storage probe stays read-only. Preparing this image
+does not authorize installing it or booting a writable root over Android data.
 
 ## Prepared userspace
 

@@ -15,17 +15,24 @@ def props(n):
     return dict((k, v) for k, f, v in n.props)
 
 
-def payload():
+def payload(apple=False):
     base, virt = 0x100000000, 0xfffffe0007000000
-    tree = surya.build(base, 0x20000000, seed=b'0' * 64)
-    tree_blob = mkpayload.add_ramdisk_to_adt(adt.serialize(tree), base + 0x4000, 0x4000)
+    tree = surya.build(base, 0xfc000000 if apple else 0x20000000, seed=b'0' * 64)
+    if apple:
+        surya.setprop(surya.child(tree, 'chosen'), 'surya-apple-root', mkadt.u32(1))
+        surya.setprop(surya.child(tree, 'chosen'), 'surya-ufs-probe', mkadt.u32(1))
+        tree.children.append(mkadt.node('sweet-ufs', [
+            ('reg', mkadt.u64(0x1d84000, 0x3000)), ('surya-read-only', mkadt.u32(0)),
+            ('surya-root-contract', mkadt.u64(3688984, 26430947, 4194304))]))
+        tree.children.append(mkadt.node('product', []))
+    tree_blob = adt.serialize(tree) if apple else mkpayload.add_ramdisk_to_adt(adt.serialize(tree), base + 0x4000, 0x4000)
     off = mkpayload.SEG_TABLE + 64
     dt_off = off + 0x8000
     b = bytearray(dt_off)
     struct.pack_into('<8sII7Q', b, 0, b'SWEETXNU', 1, 2, virt,
                      virt + 0x100, dt_off, len(tree_blob), virt + 0x8000,
-                     base, 0x20000000)
-    cmd = surya.CMDLINE.encode()
+                     base, 0xfc000000 if apple else 0x20000000)
+    cmd = (surya.APPLE_CMDLINE if apple else surya.CMDLINE).encode()
     b[0x48:0x48 + len(cmd)] = cmd
     struct.pack_into('<4Q', b, mkpayload.SEG_TABLE, virt, 0x4000, off, 0x4000)
     struct.pack_into('<4Q', b, mkpayload.SEG_TABLE + 32, virt + 0x4000, 0x4000, off + 0x4000, 0x4000)
@@ -67,6 +74,15 @@ class SuryaTests(unittest.TestCase):
                            (0x9c000000, 0x20000000), (1 << 40, 0x20000000)]:
             with self.subTest(base=base, size=size), self.assertRaises(ValueError):
                 surya.build(base, size)
+
+    def test_apple_root_payload_is_separate_from_test_ramdisk(self):
+        b = payload(apple=True)
+        self.assertEqual(surya.validate_payload(b)['stage'], 'apple-root')
+        cmd = surya.CMDLINE.encode()
+        b[0x48:mkpayload.SEG_TABLE] = bytes(mkpayload.SEG_TABLE - 0x48)
+        b[0x48:0x48 + len(cmd)] = cmd
+        with self.assertRaises(ValueError):
+            surya.validate_payload(b)
 
     def test_valid_ramdisk_payload(self):
         self.assertEqual(surya.validate_payload(payload())['board'], 'surya')
