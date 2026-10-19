@@ -83,6 +83,8 @@ const char *loader_boot(uintptr_t dtb)
 	if (!fdt_chosen_u64(dtb, "linux,initrd-start", &rd_start) ||
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
 		return "no initrd in /chosen";
+	if (rd_end < rd_start || rd_end - rd_start < sizeof(struct payload) || (rd_start & 7))
+		return "short or unaligned initrd";
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
 
 	const struct payload *p = (const struct payload *)rd_start;
@@ -90,6 +92,33 @@ const char *loader_boot(uintptr_t dtb)
 		return "no SWEETXNU payload";
 	if (p->version != 1 || (p->adt_off & 7) || (rd_start & 7))
 		return "bad payload header";
+	uint64_t rd_size = rd_end - rd_start;
+	if (!p->nsegs || p->nsegs > 128 ||
+	    sizeof(*p) + (uint64_t)p->nsegs * sizeof(struct payload_seg) > p->adt_off ||
+	    p->adt_off > rd_size || p->adt_size > rd_size - p->adt_off)
+		return "payload table/ADT outside initrd";
+	if ((p->phys_base & (PAGE_16K - 1)) || !p->mem_size ||
+	    p->phys_base >= (1ULL << 40) || p->mem_size > (1ULL << 40) - p->phys_base ||
+	    p->kernel_end < p->virt_base || p->kernel_end - p->virt_base > p->mem_size)
+		return "bad payload memory range";
+	uint64_t used = p->kernel_end - p->virt_base;
+	if (p->adt_size > p->mem_size - used ||
+	    p->mem_size - used - p->adt_size < 2 * PAGE_16K)
+		return "no room for ADT and boot arguments";
+	int entry_loaded = 0;
+	for (uint32_t i = 0; i < p->nsegs; i++) {
+		const struct payload_seg *s = &p->segs[i];
+		if (s->vmaddr < p->virt_base || (s->vmaddr & 7) || (s->vmsize & 7) ||
+		    !s->vmsize || s->file_size > s->vmsize || (s->file_off & 7) ||
+		    s->file_off < sizeof(*p) + (uint64_t)p->nsegs * sizeof(*s) ||
+		    s->file_off > p->adt_off || s->file_size > p->adt_off - s->file_off ||
+		    s->vmaddr - p->virt_base > used || s->vmsize > used - (s->vmaddr - p->virt_base))
+			return "segment outside payload or kernel memory";
+		if (p->entry_va >= s->vmaddr && p->entry_va - s->vmaddr < s->vmsize)
+			entry_loaded = 1;
+	}
+	if (!entry_loaded)
+		return "entry outside loaded segments";
 
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
 	con_hex2("PHYS", "base=", p->phys_base, "size=", p->mem_size);

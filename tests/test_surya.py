@@ -1,0 +1,94 @@
+"""Host checks for board separation and payload rejection before RAM writes."""
+import struct
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+import adt
+import mkadt
+import mkpayload
+import surya
+
+
+def props(n):
+    return dict((k, v) for k, f, v in n.props)
+
+
+def payload():
+    base, virt = 0x100000000, 0xfffffe0007000000
+    tree = surya.build(base, 0x20000000, seed=b'0' * 64)
+    tree_blob = mkpayload.add_ramdisk_to_adt(adt.serialize(tree), base + 0x4000, 0x4000)
+    off = mkpayload.SEG_TABLE + 64
+    dt_off = off + 0x8000
+    b = bytearray(dt_off)
+    struct.pack_into('<8sII7Q', b, 0, b'SWEETXNU', 1, 2, virt,
+                     virt + 0x100, dt_off, len(tree_blob), virt + 0x8000,
+                     base, 0x20000000)
+    cmd = surya.CMDLINE.encode()
+    b[0x48:0x48 + len(cmd)] = cmd
+    struct.pack_into('<4Q', b, mkpayload.SEG_TABLE, virt, 0x4000, off, 0x4000)
+    struct.pack_into('<4Q', b, mkpayload.SEG_TABLE + 32, virt + 0x4000, 0x4000, off + 0x4000, 0x4000)
+    b += tree_blob
+    return b
+
+
+class SuryaTests(unittest.TestCase):
+    def test_board_identity_and_ramdisk_only(self):
+        tree = surya.build(0x100000000, 0x20000000, seed=b'0' * 64)
+        compat = props(tree)['compatible'].split(b'\0')
+        self.assertIn(b'xiaomi,surya', compat)
+        self.assertNotIn(b'xiaomi,sweet', compat)
+        self.assertEqual(len(surya.child(tree, 'cpus').children), 1)
+        self.assertNotIn(b'sweet-ufs\0', [props(n)['name'] for n in tree.children])
+        self.assertEqual(mkpayload.adt_dram(adt.serialize(tree)), (0x100000000, 0x20000000))
+
+    def test_qemu_uses_virtual_interrupt_map(self):
+        tree = surya.build(0xb0000000, 0x20000000, qemu=True, seed=b'0' * 64)
+        gic = surya.child(surya.child(tree, 'arm-io'), 'gic')
+        self.assertEqual(props(gic)['virtual-timer-intid'], mkadt.u32(27))
+
+    def test_memory_rejects_unaligned_or_framebuffer_overlap(self):
+        for base, size in [(0x100000001, 0x20000000), (0x100000000, 1),
+                           (0x9c000000, 0x20000000), (1 << 40, 0x20000000)]:
+            with self.subTest(base=base, size=size), self.assertRaises(ValueError):
+                surya.build(base, size)
+
+    def test_valid_ramdisk_payload(self):
+        self.assertEqual(surya.validate_payload(payload())['board'], 'surya')
+
+    def test_truncated_header_and_segment_table(self):
+        b = payload()
+        for length in (0, 8, mkpayload.SEG_TABLE - 1, mkpayload.SEG_TABLE + 32):
+            with self.subTest(length=length), self.assertRaises(ValueError):
+                surya.validate_payload(b[:length])
+
+    def test_writable_command_line_rejected(self):
+        b = payload()
+        start = b.index(b'ufsrw=0')
+        b[start:start + 7] = b'ufsrw=1'
+        with self.assertRaisesRegex(ValueError, 'command line'):
+            surya.validate_payload(b)
+
+    def test_wrong_board_rejected(self):
+        b = payload().replace(b'xiaomi,surya', b'xiaomi,sweet')
+        with self.assertRaisesRegex(ValueError, 'not for surya'):
+            surya.validate_payload(b)
+
+    def test_outside_ram_entry_and_overlapping_segments(self):
+        for offset, value in [(0x18, 0), (mkpayload.SEG_TABLE, 0xfffffe0107000000),
+                              (mkpayload.SEG_TABLE + 32, 0xfffffe0007000000),
+                              (mkpayload.SEG_TABLE + 16, 0), (0x20, 1 << 63)]:
+            b = payload()
+            struct.pack_into('<Q', b, offset, value)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                surya.validate_payload(b)
+
+    def test_upstream_sweet_still_selects_sweet(self):
+        root = mkadt.build(seed=b'0' * 64, product_path=None)
+        self.assertIn(b'xiaomi,sweet', props(root)['compatible'].split(b'\0'))
+        self.assertEqual(len(surya.child(root, 'cpus').children), 8)
+
+
+if __name__ == '__main__':
+    unittest.main()

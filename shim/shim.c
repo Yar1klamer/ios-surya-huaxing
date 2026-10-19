@@ -377,11 +377,22 @@ void shim_main(uint64_t dtb)
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
 	stage = "loader";
 	con_clear(RED);
+#if SURYA_BRINGUP
+	con_str("SHIM", "surya: XNU RAM-disk bring-up");
+#else
 	con_str("SHIM", "sweet milestone 4: xnu loader");
+#endif
 	con_skip();
 	const char *why = loader_boot(dtb);
 	con_str("LOADER", why);
 	con_skip();
+#if SURYA_BRINGUP
+	/* A missing/invalid payload must never fall through to the sweet UFS probe. */
+	con_str("SURYA", "halted; no storage probe, hold Power to restart");
+	for (;;) {
+		__asm__ volatile("wfe");
+	}
+#endif
 
 	/* No payload: probe the internal UFS while the MMU is still off. */
 	stage = "ufs";
