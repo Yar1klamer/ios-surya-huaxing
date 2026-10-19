@@ -9,6 +9,19 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+Framebuffer mapping fix is committed/pushed as 2835733. CI run 39308473061:
+https://github.com/arbuxiktech/ios-surya/actions/runs/39308473061
+Build PASSED in 7m15s. Owner replied ready in Fastboot; temporary boot sent and
+started: Sending OKAY 0.476s; Booting OKAY 5.093s; exit 0. SCREEN RESULT PENDING.
+Kernel c9b2bcb06f4633ead67e4dbc8ac8f8404095272d3da59abf0e5fdcac420d1b3a
+verified against CI checksum and plain arm64/SURYA marker. Boot image SHA256
+7668aac08649b1fdba70de5a074338c1b5becdf03e3a5a87e1f08977d8146f55;
+embedded payload verified byte-for-byte. Saved research/native-tests/io64/.
+Host suite 17/17 and repo validation (84 patches) passed. No QEMU boot tests.
+Next: inspect new physical screen for framebuffer-map progress / next panic.
+No Apple userspace or PID1 success claimed; no partitions flashed.
+
+
 Latest source milestone: 9c370c9 (userspace assembly + live RAM guard), then
 98ed9c5 (native panic evidence + patch 0083). Both pushed to owner fork main
 and codex/surya-port. Diagnostic CI run 39306668551 PASSED (8m21s):

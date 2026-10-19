@@ -27,6 +27,8 @@ The previous independent Poco project is suspended and preserved at
   of starting the Redmi UFS probe. Segment bounds are checked before RAM copies.
 - A live-FDT check requires RAM coverage and rejects fixed reservation overlap
   before copying kernel segments.
+- SURYA reserves at least 64 MiB of early I/O page-table coverage so the
+  two boot framebuffer mappings fit with the small RAM-disk target.
 - Packaging checks board identity, kernel target, plain arm64, RAM bounds,
   command line, entry point and required test RAM disk.
 
