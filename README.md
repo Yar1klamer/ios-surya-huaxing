@@ -5,8 +5,9 @@ Adaptation of [ios-sweet](https://github.com/dipa-studio/ios-sweet), pinned at
 SM7150 / Snapdragon 732G**. Other Poco X3 variants are not targets.
 
 **Native SURYA XNU boots the RAM disk and runs the static test PID 1.**
-The Apple filesystem is installed with owner approval; the first Apple-root
-boot attempt has been sent. Its actual launchd/UI result is pending.
+Apple launchd is spawning iOS services from the installed filesystem.
+Repeated xpcproxy/bluetoothd/fairplayd.H2 launches need diagnosis; GUI and
+stable daemon startup remain unproven.
 Upstream Redmi Note 10 Pro results belong to that device. Its original
 [README](README.sweet.md) is preserved as reference; its userdata-erasing
 installation steps are not the procedure for this Poco port.
@@ -91,7 +92,7 @@ userspace: launchd, dyld, backboardd, SpringBoard and arm64 dyld caches.
 and executable hashes matched after read-back. Apple artifacts remain untracked.
 
 The verified image was installed to userdata with explicit owner approval.
-UFS GPT reads passed; the bounded Apple-root boot attempt awaits physical logs.
+UFS GPT reads and the bounded Apple-root boot reached launchd service spawning.
 Activation, GUI, input and writable-root runtime remain unproven. No iOS/XNU QEMU boot tests
 will be run under the current owner's preference.
 

@@ -34,8 +34,18 @@ Exactly one phone, boot hash verified; fastboot boot Sending OKAY0.483s,
 Booting OKAY5.094s, exit0,total5.587s. This image uses rd=ufsroot0, native
 userdata HFSX root, real /sbin/launchd and dyld/shared cache; no test RAMdisk.
 Log research/apple-root-ready/boot-apple-first.log; result JSON beside it.
-SCREEN RESULT PENDING. Do not equate Fastboot success with launchd running.
-Owner asked for latest exec/launchd/dyld/panic output; inspect that next.
+SCREEN RESULT RECEIVED: user first saw Apple logo, then photo
+codex-clipboard-28a9e074-4ce9-4026-a052-cc0dea3dcabe.png shows repeated
+exec xpcproxy, exec fairplayd.H2, exec bluetoothd. Real Apple launchd is spawning
+iOS jobs from the installed root; dyld/shared-cache execution progressed enough
+for xpcproxy to request daemon execs. This confirms the Apple launchd milestone,
+not a stable daemon set or GUI. Repeated execs suggest relaunch/exec-failure
+loops; no exit reason visible, so do not assume the exact fault/hardware cause.
+Existing kernel sweetnull boot arg can tee selected /dev/null daemon output
+onto console. Default traces only backboardd/SpringBoard. Next diagnostic can
+add launchd,xpcproxy,bluetoothd,fairplayd.H2 without reflashing the filesystem.
+Kernel crash logging already exists for signal exits, but normal exit codes/
+exec failures may not trigger it. Never suppress daemons merely to hide logs.
 Approval covers this installation and boot; no repeat approval needed for
 non-destructive diagnosis/temporary kernel tests. No other partitions written.
 
