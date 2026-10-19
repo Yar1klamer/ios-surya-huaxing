@@ -48,6 +48,20 @@ class SuryaTests(unittest.TestCase):
         gic = surya.child(surya.child(tree, 'arm-io'), 'gic')
         self.assertEqual(props(gic)['virtual-timer-intid'], mkadt.u32(27))
 
+    def test_storage_probe_requires_measured_controller_and_no_writes(self):
+        evidence = dict(board='surya', soc_id=365, disk_writes_allowed=False,
+                        controller=dict(base=0x1d84000, size=0x3000,
+                                        compatible='qcom,ufshc', status='ok'))
+        tree = surya.build(0x100000000, 0x20000000, seed=b'0' * 64, storage=evidence)
+        self.assertEqual(props(surya.child(tree, 'chosen'))['surya-ufs-probe'], mkadt.u32(1))
+        self.assertEqual(props(surya.child(tree, 'sweet-ufs'))['surya-read-only'], mkadt.u32(1))
+        for key, value in [('base', 0x1234000), ('size', 0x8000), ('status', 'disabled')]:
+            bad = {**evidence, 'controller': {**evidence['controller'], key: value}}
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                surya.build(0x100000000, 0x20000000, storage=bad)
+        with self.assertRaises(ValueError):
+            surya.build(0x100000000, 0x20000000, storage={**evidence, 'disk_writes_allowed': True})
+
     def test_memory_rejects_unaligned_or_framebuffer_overlap(self):
         for base, size in [(0x100000001, 0x20000000), (0x100000000, 1),
                            (0x9c000000, 0x20000000), (1 << 40, 0x20000000)]:

@@ -39,7 +39,7 @@ def validate_memory(base, size):
         raise ValueError('RAM overlaps the boot framebuffer')
 
 
-def build(base, size, *, seed=None, qemu=False, product=None):
+def build(base, size, *, seed=None, qemu=False, product=None, storage=None):
     validate_memory(base, size)
     root = mkadt.build(seed=seed, qemu=qemu, product_path=None)
     setprop(root, 'compatible', mkadt.cstr('D22AP') + mkadt.cstr('iPhone10,3') +
@@ -55,6 +55,18 @@ def build(base, size, *, seed=None, qemu=False, product=None):
     child(root, 'cpus').children = child(root, 'cpus').children[:1]
     root.children = [n for n in root.children
                      if dict((k, v) for k, f, v in n.props)['name'] != b'sweet-ufs\0']
+    if storage is not None:
+        c = storage['controller']
+        if (qemu or storage.get('board') != 'surya' or storage.get('soc_id') != 365
+                or c.get('base') != 0x1d84000 or c.get('size') != 0x3000
+                or c.get('compatible') != 'qcom,ufshc' or c.get('status') not in ('ok', 'okay')
+                or storage.get('disk_writes_allowed') is not False):
+            raise ValueError('storage probe requires measured SURYA controller and writes disabled')
+        setprop(chosen, 'surya-ufs-probe', mkadt.u32(1))
+        root.children.append(mkadt.node('sweet-ufs', [
+            ('reg', mkadt.u64(c['base'], c['size'])),
+            ('surya-read-only', mkadt.u32(1)),
+        ]))
     if product:
         props = mkadt.d22ap_product(str(product))
         root.children = [n for n in root.children
@@ -78,6 +90,16 @@ def validate_payload(blob):
     props = dict((k, v) for k, f, v in root.props)
     if b'xiaomi,surya' not in props.get('compatible', b'').split(b'\0'):
         raise ValueError('payload is not for surya')
+    ufs_nodes = [n for n in root.children if n.name == 'sweet-ufs']
+    chosen_props = dict((k, v) for k, f, v in child(root, 'chosen').props)
+    probe = chosen_props.get('surya-ufs-probe')
+    if probe is not None or ufs_nodes:
+        if probe != mkadt.u32(1) or len(ufs_nodes) != 1:
+            raise ValueError('incomplete read-only storage probe contract')
+        ufs_props = dict((k, v) for k, f, v in ufs_nodes[0].props)
+        if (ufs_props.get('reg') != mkadt.u64(0x1d84000, 0x3000)
+                or ufs_props.get('surya-read-only') != mkadt.u32(1)):
+            raise ValueError('invalid SURYA storage probe mapping')
     if mkpayload.adt_dram(blob[off:off + length]) != (base, size):
         raise ValueError('RAM contract mismatch')
     # Validate the same contract used by ADT generation, including address limits.
@@ -120,10 +142,12 @@ def main():
     p.add_argument('--memory-evidence', type=Path, required=True, help='local DT/map source; recorded, never inferred from sweet')
     p.add_argument('--product-adt', type=Path)
     p.add_argument('--qemu', action='store_true')
+    p.add_argument('--storage-evidence', type=Path, help='live Poco controller evidence; read-only probe only')
     a = p.parse_args()
     if not a.memory_evidence.is_file():
         p.error('--memory-evidence must name an existing local source file')
-    root = build(a.dram_base, a.dram_size, qemu=a.qemu, product=a.product_adt)
+    storage = json.loads(a.storage_evidence.read_text(encoding='utf-8')) if a.storage_evidence else None
+    root = build(a.dram_base, a.dram_size, qemu=a.qemu, product=a.product_adt, storage=storage)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_bytes(adt.serialize(root))
     a.out.with_suffix('.json').write_text(json.dumps(dict(board='surya', upstream=UPSTREAM,
@@ -131,6 +155,8 @@ def main():
         memory_evidence_sha256=hashlib.sha256(a.memory_evidence.read_bytes()).hexdigest(),
         memory_verified_on_device=False,
         kernel_target='SURYA', qemu=a.qemu, command_line=CMDLINE,
+        storage_probe=bool(storage),
+        storage_evidence_sha256=hashlib.sha256(a.storage_evidence.read_bytes()).hexdigest() if storage else None,
         status='generated, untested on hardware'), indent=2) + '\n')
     print(a.out)
 

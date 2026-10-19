@@ -1,0 +1,100 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -148,6 +148,12 @@
+ static int
+ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ {
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	/* Native bring-up cannot submit write or other state-changing commands. */
++	if (write || cdb_len == 0 || (cdb[0] != 0x00 && cdb[0] != 0x28)) {
++		return EROFS;
++	}
++#endif
+ 	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
+ 	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
+ 	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
+@@ -587,8 +593,15 @@
+ sweet_ufs_init(void)
+ {
+ #if defined(ARM64_BOARD_CONFIG_SURYA)
+-	printf("SURYA: internal storage disabled; use rd=md0\n");
+-	return ENXIO;
++	DTEntry chosen;
++	const uint32_t *probe = NULL;
++	unsigned int probe_size = 0;
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	    SecureDTGetProperty(chosen, "surya-ufs-probe", (void const **)&probe,
++	    &probe_size) != kSuccess || probe_size != sizeof(*probe) || *probe != 1) {
++		printf("SURYA: internal storage disabled; use rd=md0\n");
++		return ENXIO;
++	}
+ #endif
+ 	DTEntry node;
+ 	uintptr_t const *reg = NULL;
+@@ -602,6 +615,17 @@
+ 		printf("SWEET UFS: no /sweet-ufs node in the device tree\n");
+ 		return ENXIO;
+ 	}
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	const uint32_t *read_only = NULL;
++	unsigned int read_only_size = 0;
++	if (reg[0] != 0x01d84000 || reg[1] != 0x3000 ||
++	    SecureDTGetProperty(node, "surya-read-only", (void const **)&read_only,
++	    &read_only_size) != kSuccess || read_only_size != sizeof(*read_only) ||
++	    *read_only != 1) {
++		printf("SURYA UFS: controller contract rejected\n");
++		return ENXIO;
++	}
++#endif
+ 	PE_parse_boot_argn("ufsroot", want, sizeof(want));
+ 	uint32_t rw = 0;
+ 	PE_parse_boot_argn("ufsrw", &rw, sizeof(rw));
+@@ -653,11 +677,19 @@
+ 	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
+ 	devfs_make_node(makedev(su.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rufsroot0");
+ 	/* Only now, with the partition bounds known, can writes be allowed. */
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	su.writable = false; /* Boot arguments cannot enable physical disk writes. */
++#else
+ 	su.writable = (rw != 0);
++#endif
+ 	su.ready = true;
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	/* The storage probe does not start unrelated board peripherals. */
++	return 0;
++#endif
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+@@ -824,4 +856,13 @@
+ 	*dev = su.bdev;
+ 	return 0;
+ }
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++void surya_ufs_probe(void);
++void
++surya_ufs_probe(void)
++{
++	int error = sweet_ufs_init();
++	printf("SURYA UFS PROBE: status=%d; disk writes disabled\n", error);
++}
++#endif
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -999,6 +999,10 @@
+ 
+ 		bsd_init_kprintf("calling devfs_kernel_mount\n");
+ 		devfs_kernel_mount(mounthere);
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++		extern void surya_ufs_probe(void);
++		surya_ufs_probe();
++#endif
+ 	}
+ #endif /* DEVFS */
+ 

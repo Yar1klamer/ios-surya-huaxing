@@ -9,6 +9,29 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+Owner explicitly requests Apple launchd and daemons next. Android ADB hardware
+collection completed without root (su absent). ROM identity is OP60FFL1/PLK110,
+but soc0 machine IDP SDMMAGPIE, soc_id 365, platform sm6150 and live UFS data
+match the target. Pulled all 16,752 readable device-tree properties into ignored
+research/live-surya-android/device-tree/. Raw /sys/firmware/fdt is restricted;
+no need to root phone just for the readable filesystem copy.
+Live memory: 0x80000000 + 0x80000000 and 0x100000000 + 0xfcc00000.
+Live ufshc@1d84000: first reg 0x01d84000 + 0x3000, qcom,ufshc, status ok;
+UFS PHY 0x01d87000; core reset GCC phandle 0x27 index 3; eight clock refs
+recorded locally. SDA logical/physical sector 4096, sysfs size 240959488 x512.
+Storage evidence JSON is private/ignored; do not commit device dumps/identifiers.
+Patch 0085 and ADT storage-evidence option prepare a native READ-ONLY probe
+while rd=md0/test PID1 stays unchanged. Default SURYA storage remains disabled.
+Only measured controller node + chosen probe marker enables takeover. SURYA
+SCSI layer permits TEST UNIT READY and READ(10) only, forbids data-out and all
+other opcodes; su.writable forcibly false regardless of boot args. No PMIC,
+input, USB, sampling or persistent logging started from the probe. Uses ABL
+host state, aborts if controller not ready/outstanding requests/no 64-bit DMA.
+18 host tests and 85-patch repo validation pass. Native probe result pending.
+Apple root is prepared but still local; launchd has NOT run. No installation
+or userdata erase approval has been requested or granted in this adaptation.
+
+
 Framebuffer mapping fix is committed/pushed as 2835733. CI run 39308473061:
 https://github.com/arbuxiktech/ios-surya/actions/runs/39308473061
 Build PASSED in 7m15s. Owner replied ready in Fastboot; temporary boot sent and
