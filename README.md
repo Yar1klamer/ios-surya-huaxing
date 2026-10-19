@@ -4,7 +4,8 @@ Adaptation of [ios-sweet](https://github.com/dipa-studio/ios-sweet), pinned at
 `11da58bd050672960c0a83b5bef2176047eea479`. Target: **Poco X3 NFC (`surya`),
 SM7150 / Snapdragon 732G**. Other Poco X3 variants are not targets.
 
-**SURYA kernel compiles successfully; no iOS boot demonstrated on surya.**
+**Native SURYA XNU boots the RAM disk and runs the static test PID 1.**
+Apple launchd and the iOS interface have not booted on this device.
 Upstream Redmi Note 10 Pro results belong to that device. Its original
 [README](README.sweet.md) is preserved as reference; its userdata-erasing
 installation steps are not the procedure for this Poco port.
@@ -89,15 +90,16 @@ Run `python3 -m unittest discover -s tests -v` and
 locally. Patch 0082 applies to the relevant sources after patches 0001–0081;
 this is not a full kernel compile or runtime test.
 
-Next: authoritative Poco DTB/memory contract;
-temporary kernel/RAM-disk test; Poco panel refresh, touch, keys and power details;
-read-only storage bring-up; separately approved installation of the prepared iOS userspace.
+Next: validate Poco storage/clock/reset details and bring up storage read-only;
+Poco panel refresh, touch, keys and power details; separately approved
+installation of the prepared iOS userspace.
 Do not reuse Redmi GPIO/rail values, partition offsets or installation approvals.
 
 Earlier Poco UEFI diagnostics observed framebuffer `0x9c000000`, 1080×2400,
 4320-byte stride. This agrees with the inherited console layout but does not
 establish stock ABL panel continuity or LCD refresh behavior.
 
-The first temporary native test image was accepted by Fastboot; its screen confirms native XNU console output followed by
-a pmap_map_bd panic before test PID1. No partitions have been flashed or erased. See
-[NOTES.md](NOTES.md) for the active handoff and upstream history.
+A physical Poco test confirmed RAM-disk root `md0`, the static test program
+running as PID 1, and repeated heartbeat messages after patch 0084. The original
+framebuffer mapping panic is resolved for this test. No partitions have been
+flashed or erased. See [NOTES.md](NOTES.md) for evidence and remaining work.

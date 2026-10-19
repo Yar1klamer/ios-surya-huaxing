@@ -12,14 +12,28 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 Framebuffer mapping fix is committed/pushed as 2835733. CI run 39308473061:
 https://github.com/arbuxiktech/ios-surya/actions/runs/39308473061
 Build PASSED in 7m15s. Owner replied ready in Fastboot; temporary boot sent and
-started: Sending OKAY 0.476s; Booting OKAY 5.093s; exit 0. SCREEN RESULT PENDING.
+started: Sending OKAY 0.476s; Booting OKAY 5.093s; exit 0. SCREEN CONFIRMED: native XNU + static test PID1 running.
 Kernel c9b2bcb06f4633ead67e4dbc8ac8f8404095272d3da59abf0e5fdcac420d1b3a
 verified against CI checksum and plain arm64/SURYA marker. Boot image SHA256
 7668aac08649b1fdba70de5a074338c1b5becdf03e3a5a87e1f08977d8146f55;
 embedded payload verified byte-for-byte. Saved research/native-tests/io64/.
 Host suite 17/17 and repo validation (84 patches) passed. No QEMU boot tests.
-Next: inspect new physical screen for framebuffer-map progress / next panic.
-No Apple userspace or PID1 success claimed; no partitions flashed.
+Physical photo codex-clipboard-4a3ecc73-dea0-4ca4-88e5-d5e6c40cab3e shows:
+- BSD root md0 (RAM disk), major 1 minor 0.
+- load_init_program attempts /sbin/launchd (the static test init in this image).
+- "*** SWEET userspace: init running as PID 1 ***" and four visible
+  "SWEET init: still alive" messages. This is confirmed native EL0/PID1 progress.
+- Kernel reports CPU0 came alive; SGI1 OK, 1/1 CPUs initialized.
+- Visible Skywalk memory-copy/zero self-tests report PASSED; HFS registered.
+Patch 0084 therefore resolves the observed framebuffer PTE exhaustion sufficiently
+to reach test PID1 on this device. No full uptime/stress/peripheral proof inferred.
+This init is NOT Apple's launchd; no Apple userspace or SpringBoard boot claimed.
+No partitions flashed. Preserve io64 image as the working RAM-disk baseline.
+Next milestone: obtain actual Poco UFS/clock/reset/reservation data and implement
+read-only storage identification with write paths still disabled. The prepared
+16 GiB Apple root stays local until storage is validated and installation is
+explicitly approved. Touch/input, panel runtime behavior, activation and GUI are
+still unverified. Do not blindly turn on the upstream Redmi UFS/PMIC routines.
 
 
 Latest source milestone: 9c370c9 (userspace assembly + live RAM guard), then
