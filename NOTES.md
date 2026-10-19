@@ -21,7 +21,15 @@ FLASH STARTED: fastboot -S 128M flash userdata on verified sparse image.
 93 chunks; live log research/apple-root-ready/flash-userdata-first.log,
 result JSON research/apple-root-ready/flash-userdata-result.json when complete.
 Do not run concurrent phone commands during transfer. Only boot if exit 0 and
-all 93 writes finish. First 10 chunks OK at this handoff; transfer still running.
+all 93 writes finish. FLASH COMPLETE: all 93 sends and 93 writes OK, exit0, total316.724s.
+Log parsed and sequence 1..93 verified; sparse image installed to userdata.
+Normal ColorOS userdata is now replaced, as explicitly approved. No other
+partitions targeted. assets.json records filesystem_installed=true.
+Apple boot image hash reverified. Requested owner manual Power+VolumeDown
+Fastboot re-entry after the large transfer; do not run commands against hung
+ABL. Next: exactly one device, temporary boot research/apple-root-ready/
+boot-apple-root.img (7eadc61f...28e9d9), then obtain actual screen evidence.
+Apple launchd has not yet been booted or proven.
 
 
 Native read-only UFS test PASSED: photo
