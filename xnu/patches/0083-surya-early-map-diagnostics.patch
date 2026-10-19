@@ -1,0 +1,44 @@
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -1882,7 +1882,13 @@
+ 	while (paddr < end) {
+ 		ptep = pmap_pte(kernel_pmap, vaddr);
+ 		if (ptep == PT_ENTRY_NULL) {
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++			panic("SURYA pmap_map_bd: va=%p phys=%p..%p base_va=%p caller=%p",
++			    (void *)vaddr, (void *)start, (void *)end,
++			    (void *)virt, __builtin_return_address(0));
++#else
+ 			panic("pmap_map_bd");
++#endif
+ 		}
+ 		assert(!ARM_PTE_IS_COMPRESSED(*ptep, ptep));
+ 		write_pte_strong(ptep, tmplate);
+diff --git a/osfmk/arm/io_map.c b/osfmk/arm/io_map.c
+--- a/osfmk/arm/io_map.c
++++ b/osfmk/arm/io_map.c
+@@ -64,6 +64,10 @@
+ #include <vm/vm_map.h>
+ #include <arm/pmap.h>
+ #include <san/kasan.h>
++#include <pexpert/pexpert.h>
++#if defined(__arm64__)
++#include <pexpert/arm64/board_config.h>
++#endif
+ 
+ extern vm_offset_t virtual_space_start;     /* Next available kernel VA */
+ 
+@@ -105,6 +109,12 @@
+ 		start = virtual_space_start;
+ 		virtual_space_start += round_page(size);
+ 
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++		kprintf("SURYA early io_map: va=%p phys=%p size=0x%llx flags=0x%x\n",
++		    (void *)start, (void *)phys_addr,
++		    (unsigned long long)alloc_size, flags);
++#endif
++
+ 		assert(flags == VM_WIMG_WCOMB || flags == VM_WIMG_IO);
+ 
+ 		if (flags == VM_WIMG_WCOMB) {

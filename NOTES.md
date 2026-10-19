@@ -71,9 +71,14 @@ no device boot success claimed.
   shim/out/surya/shim-boot.img, SHA256
   c10afcb94b40fc9fa48e2d3c9e5e492b64f3f480579bb0eac79829bf2370534e.
   fastboot boot: Sending OKAY (0.483s), Booting OKAY (5.095s), exit 0.
-  This uses XNU + static test PID1, not Apple launchd. SCREEN RESULT PENDING.
+  This uses XNU + static test PID1, not Apple launchd. SCREEN RESULT RECEIVED: XNU native framebuffer console works; panic
+  pmap_map_bd @pmap.c:1885 after kprintf startup (early marker 20).
+  Test PID1 and Apple userspace have NOT started.
   No partitions flashed or erased; fastboot transfer is not kernel boot proof.
-  Next: inspect actual phone screen; if RAM guard rejects, obtain live RAM map.
+  Next: build patch 0083 to expose failed virtual/physical map and early
+  io_map requests. Source confirms null PTE triggers this panic. Do not bypass
+  the check or claim its root cause without the missing address evidence.
+  Windows userspace image SHA256 independently matched the expected hash.
 
 - Patch 0082 adds machine_config=SURYA, shares ARM64_BOARD_CONFIG_SWEET for the
   SoC implementation and adds ARM64_BOARD_CONFIG_SURYA for physical-board policy.

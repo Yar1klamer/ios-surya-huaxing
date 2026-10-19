@@ -96,6 +96,6 @@ Earlier Poco UEFI diagnostics observed framebuffer `0x9c000000`, 1080×2400,
 4320-byte stride. This agrees with the inherited console layout but does not
 establish stock ABL panel continuity or LCD refresh behavior.
 
-The first temporary native test image was accepted by Fastboot; its screen
-result is pending. No partitions have been flashed or erased. See
+The first temporary native test image was accepted by Fastboot; its screen confirms native XNU console output followed by
+a pmap_map_bd panic before test PID1. No partitions have been flashed or erased. See
 [NOTES.md](NOTES.md) for the active handoff and upstream history.
