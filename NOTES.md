@@ -9,6 +9,21 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+OWNER APPROVAL RECEIVED: user replied "yes" to the explicit request to replace
+userdata with the verified Apple filesystem and temporarily boot Apple launchd,
+after disclosure that ColorOS apps/settings/personal files are replaced and no
+personal backup was made. Authorization applies to this exact prepared image
+and boot attempt, not GPT/boot/dtbo/recovery or arbitrary other partitions.
+Initial Fastboot count zero (phone still in prior test); asked owner to return
+to Fastboot. Files rehashed before flash. Do not ask approval again for the same
+authorized installation. Owner replied ready; exactly one Fastboot device found.
+FLASH STARTED: fastboot -S 128M flash userdata on verified sparse image.
+93 chunks; live log research/apple-root-ready/flash-userdata-first.log,
+result JSON research/apple-root-ready/flash-userdata-result.json when complete.
+Do not run concurrent phone commands during transfer. Only boot if exit 0 and
+all 93 writes finish. First 10 chunks OK at this handoff; transfer still running.
+
+
 Native read-only UFS test PASSED: photo
 codex-clipboard-1eb8a29f-e005-4984-ab86-bf5a05490e55.png shows status=0,
 userdata LUN 0 first block 0x384a18 (3688984), 103245 MiB, read-only, DMA
