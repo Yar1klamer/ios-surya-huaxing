@@ -1,0 +1,584 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: surya-port <surya-port@localhost>
+Date: Mon, 20 Oct 2026 00:00:00 +0000
+Subject: [PATCH] surya: Novatek NT36672C SPI touch driver
+
+Replace the SURYA early-return stub in sweet_touch_init() with a full
+Novatek NT36672C SPI driver targeting GENI SE0 (0x00880000).
+
+Hardware (Poco X3 NFC, SM7150/Snapdragon 732G):
+  Touch IC   : Novatek NT36672C over GENI SPI SE0
+  SE0 base   : 0x00880000  (size 0x4000)
+  GCC        : 0x00100000  (shared with SWEET)
+  TLMM low   : 0x03000000  (GPIOs 0-127, 0x200000)
+  TLMM north : 0x03400000  (GPIOs 128+, 0x100000; surya SPI pins 49-52)
+  GPIO reset : 8   (active-low, output)
+  GPIO IRQ   : 9   (falling-edge, input, pull-up)
+  GPIO SPI   : 49 MOSI, 50 MISO, 51 SCLK, 52 CS  (qup00 = mux 1)
+
+Protocol (from stock DTB entry26 + nt36xxx.c Linux driver):
+  spi-rd-fast-addr = 0x3f310  — SPI fast-read address for touch event buf
+  swrst-n8-addr   = 0x3f0fe  — software reset address
+  SPI read: tx [0x3f|0x80, 0x31, 0x00] then receive 80 bytes;
+            data starts at rbuf[2] (DUMMY_BYTES=1), 78 bytes of point data.
+  Each finger slot i (0-9): offset 1+6*i in point data
+    state  = buf[off] & 0x07  (0x01=down, 0x02=moving, other=up)
+    id     = buf[off] >> 3
+    x      = (buf[off+1]<<4) | (buf[off+3]>>4)
+    y      = (buf[off+2]<<4) | (buf[off+3]&0x0f)
+  Resolution: 1080 x 2400
+
+GCC clock for SE0:
+  QUPV3 wrapper0 vote offset : 0x52008
+  RCG for SE0                : 0x17004  (wrapper0 LOCAL S0 = global SE0)
+  Branch gates               : 0x17000, 0x17018, 0x1701c, 0x17020, 0x17120
+
+SPI GENI SE0 configuration (SPI master, mode 0, 8 MHz from 19.2 MHz XO):
+  CLK_SEL=0 (DFS level 0 / XO), divider=2 => 9.6 MHz (under 10 MHz limit)
+  FIFO protocol (no DMA), 8-bit words, CPOL=0 CPHA=0, CS active-low.
+  Full-duplex transfer via SE_TX_LEN/SE_RX_LEN both set.
+---
+ bsd/dev/sweet_touch.c | 275 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 275 insertions(+)
+
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+index 6ac690f..a3f7c2e 100644
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -638,9 +638,284 @@ out:
+ void
+ sweet_touch_init(void)
+ {
+-#if defined(ARM64_BOARD_CONFIG_SURYA)
+-	printf("SURYA: touch bus/reset/rails unverified\n");
+-	return;
+-#endif
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	/* --------------------------------------------------------
++	 * Novatek NT36672C SPI touch driver for Poco X3 NFC (surya)
++	 * -------------------------------------------------------- */
++	surya_touch_init();
++	return;
++#endif /* ARM64_BOARD_CONFIG_SURYA */
+ 	int enabled = 1;
+ 	thread_t thread;
+ 	if (st.started) {
+@@ -665,3 +940,3 @@ sweet_touch_init(void)
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
++
++/* ============================================================
++ * SURYA (Poco X3 NFC) — Novatek NT36672C SPI driver
++ * Compiled only when ARM64_BOARD_CONFIG_SURYA is defined.
++ * ============================================================ */
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern kern_return_t thread_terminate(thread_t);
++extern void sweet_hid_touch(int finger, int down, int x, int y);
++static void surya_touch_init(void);
++
++/* ---- Physical addresses (from stock surya DTB) ---- */
++#define SURYA_SE0_PA        0x00880000u   /* GENI SE0 SPI master        */
++#define SURYA_GCC_PA        0x00100000u   /* GCC clock controller       */
++#define SURYA_TLMM_PA       0x03000000u   /* TLMM south (GPIOs 0-127)   */
++#define SURYA_TLMM_SIZE     0x00200000u
++#define SURYA_TLMM_N_PA     0x03400000u   /* TLMM north (GPIOs 128+)    */
++#define SURYA_TLMM_N_SIZE   0x00100000u
++
++/* GCC offsets for QUPV3 wrapper0 / SE0 */
++#define SURYA_GCC_VOTE      0x52008u      /* QUPV3 wrapper0 vote        */
++#define SURYA_RCG           0x17004u      /* wrapper0 LOCAL S0 RCG CMD  */
++
++/* GPIO helpers (one page per pin) */
++#define SGPIO_CFG(n)  ((uint32_t)(n) * 0x1000u)
++#define SGPIO_IO(n)   (SGPIO_CFG(n) + 4u)
++
++/* GENI SE register offsets (shared with SWEET but redeclared to keep
++ * this block self-contained; the compiler will discard the duplicates) */
++#define SSE_STATUS      0x040u
++#define SSE_MCLK        0x048u
++#define SSE_FW          0x068u
++#define SSE_CLK_SEL     0x07cu
++#define SSE_DMA         0x258u
++#define SSE_TX_LEN      0x26cu
++#define SSE_RX_LEN      0x270u
++#define SSE_CMD         0x600u
++#define SSE_CTRL        0x604u
++#define SSE_IRQ         0x610u
++#define SSE_IRQ_EN      0x614u
++#define SSE_IRQ_CLR     0x618u
++#define SSE_TX          0x700u
++#define SSE_RX          0x780u
++#define SSE_TX_COUNT    0x800u
++#define SSE_RX_COUNT    0x804u
++#define SSE_HW_TX       0xe24u
++#define SSE_HW_RX       0xe28u
++#define SSE_DONE        (1u << 0)
++#define SSE_ERRORS      (0x0eu | (1u<<9) | (1u<<10) | (1u<<12) | \
++                         (1u<<13) | (3u<<24) | (3u<<28))
++#define SSE_EVENTS      (SSE_DONE | SSE_ERRORS | (1u<<26) | (1u<<27) | (1u<<30))
++
++/* Novatek NT36672C protocol constants (from stock DTB + Linux nt36xxx.c) */
++#define NVT_FAST_ADDR       0x3f310u      /* SPI event buffer read addr  */
++#define NVT_SWRST_ADDR      0x3f0feu      /* software reset address      */
++#define NVT_CHIP_VER_ADDR   0x3f004u      /* chip version trim           */
++#define NVT_MAX_FINGERS     10u
++#define NVT_POINT_DATA_LEN  78u
++#define NVT_SPI_DUMMY       1u            /* dummy bytes before real data */
++/* SPI rx buffer: cmd(1) + addr(2) + dummy(1) + data(78) = 82 bytes total */
++#define NVT_RX_BUF_LEN      (3u + NVT_SPI_DUMMY + NVT_POINT_DATA_LEN)
++/* Screen size */
++#define NVT_WIDTH           1080
++#define NVT_HEIGHT          2400
++
++static struct {
++	vm_offset_t se, gcc, gpio, gpio_n;
++	bool started, dead;
++	uint32_t active;
++	int x[NVT_MAX_FINGERS], y[NVT_MAX_FINGERS];
++} sst;
++static int surya_touch_sleep_chan;
++
++/* ---- Low-level register accessors ---- */
++static uint32_t
++srd(vm_offset_t base, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++swr(vm_offset_t base, uint32_t off, uint32_t val)
++{
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(base + off) = val;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static void
++swait(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&surya_touch_sleep_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static bool
++swait_clear(vm_offset_t base, uint32_t off, uint32_t mask)
++{
++	for (unsigned i = 0; i < 5000; ++i) {
++		if (!(srd(base, off) & mask)) {
++			return true;
++		}
++		delay(1);
++	}
++	return false;
++}
++
++/* ---- GPIO config: mux, pull (0=none,1=dn,3=up), drive (0=2mA…), out ---- */
++static void
++sgpio(vm_offset_t gbase, unsigned pin, unsigned mux, unsigned pull,
++    unsigned drive, bool out)
++{
++	uint32_t off = SGPIO_CFG(pin);
++	uint32_t cfg = srd(gbase, off);
++	if (out) {
++		swr(gbase, SGPIO_IO(pin), srd(gbase, SGPIO_IO(pin)) | 2u);
++	}
++	cfg &= ~0x3ffu;
++	cfg |= (mux << 2) | pull | (drive << 6) | (out ? 0x200u : 0u);
++	swr(gbase, off, cfg);
++}
++
++/* Set output latch only (does not change mux/pull/drive) */
++static void
++sgpio_out(vm_offset_t gbase, unsigned pin, bool high)
++{
++	uint32_t io = srd(gbase, SGPIO_IO(pin));
++	if (high) {
++		io |= 2u;
++	} else {
++		io &= ~2u;
++	}
++	swr(gbase, SGPIO_IO(pin), io);
++}
++
++/* Read input latch */
++static bool
++sgpio_in(vm_offset_t gbase, unsigned pin)
++{
++	return !!(srd(gbase, SGPIO_IO(pin)) & 1u);
++}
++
++/* ---- GCC clocks for QUPV3 wrapper0 / SE0 ---- */
++static bool
++surya_clocks(void)
++{
++	/* Vote wrapper0 core + SE0 branch on. */
++	uint32_t mask = (0x0fu << 12) | (1u << 17);   /* bits for wrapper0+SE0 */
++	swr(sst.gcc, SURYA_GCC_VOTE, srd(sst.gcc, SURYA_GCC_VOTE) | mask);
++
++	uint32_t dfs = srd(sst.gcc, SURYA_RCG + 0x14u);
++	uint32_t cfg = srd(sst.gcc, SURYA_RCG + 4u);
++	printf("SURYA TOUCH: gcc vote=%#x rcg=%#x cfg=%#x dfs=%#x\n",
++	    srd(sst.gcc, SURYA_GCC_VOTE), srd(sst.gcc, SURYA_RCG), cfg, dfs);
++
++	if (dfs & 1u) {
++		/* DFS active: level 0 must be XO/1 for safe operation. */
++		cfg = srd(sst.gcc, SURYA_RCG + 0x1cu);
++		if ((cfg & 0x371fu) != 1u) {
++			printf("SURYA TOUCH: DFS level0=%#x not XO/1; need clock integration\n", cfg);
++			return false;
++		}
++	} else {
++		/* XO parent 0, divider 2 => ~9.6 MHz (<= 10 MHz SPI limit). */
++		cfg = (cfg & ~(0x371fu | (1u << 20))) | (1u << 0) | (1u << 8);
++		swr(sst.gcc, SURYA_RCG + 4u, cfg);
++		swr(sst.gcc, SURYA_RCG, srd(sst.gcc, SURYA_RCG) | 1u);
++		if (!swait_clear(sst.gcc, SURYA_RCG, 1u)) {
++			printf("SURYA TOUCH: RCG update timeout\n");
++			return false;
++		}
++	}
++	/* Enable GCC branch gates for wrapper0 SE0. */
++	const uint32_t branches[] = {0x17000, 0x17018, 0x1701c, 0x17020, 0x17120};
++	for (unsigned i = 0; i < sizeof(branches) / sizeof(branches[0]); ++i) {
++		if (!swait_clear(sst.gcc, branches[i], 1u << 31)) {
++			printf("SURYA TOUCH: GCC branch %#x halted (%#x)\n",
++			    branches[i], srd(sst.gcc, branches[i]));
++			return false;
++		}
++	}
++	return true;
++}
++
++/* ---- GENI SE0 SPI master init ---- */
++static bool
++surya_se_init(void)
++{
++	uint32_t fw  = srd(sst.se, SSE_FW);
++	uint32_t htx = srd(sst.se, SSE_HW_TX);
++	uint32_t hrx = srd(sst.se, SSE_HW_RX);
++	printf("SURYA TOUCH: SE0 fw=%#x proto=%u status=%#x htx=%#x hrx=%#x\n",
++	    fw, (fw >> 8) & 0xffu, srd(sst.se, SSE_STATUS), htx, hrx);
++
++	/* Firmware protocol field must be SPI (4). */
++	if (((fw >> 8) & 0xffu) != 4u) {
++		printf("SURYA TOUCH: SE0 firmware is not SPI (proto=%u); expected 4\n",
++		    (fw >> 8) & 0xffu);
++		return false;
++	}
++	if (srd(sst.se, SSE_STATUS) & 0x1001u) {
++		printf("SURYA TOUCH: SE0 busy; skipping init\n");
++		return false;
++	}
++
++	/* Disable DMA, GSI, external IRQ routing — use FIFO polling. */
++	swr(sst.se, 0xe18, 0);
++	swr(sst.se, 0xe1c, 0);
++	swr(sst.se, 0x644, 0);
++	swr(sst.se, SSE_IRQ_CLR, 0xffffffffu);
++	swr(sst.se, 0x648, 0xffffffffu);
++	swr(sst.se, SSE_DMA, 0);
+
++	/* Word packing: 8-bit transfers, 4 bytes per FIFO word, LSB first. */
++	swr(sst.se, 0x254, 0);
++	swr(sst.se, 0x260, 0x0004380eu);
++	swr(sst.se, 0x264, 0x000c3e0eu);
++	swr(sst.se, 0x284, 0x0004380eu);
++	swr(sst.se, 0x288, 0x000c3e0eu);
+
++	/* SPI config: CLK_SEL=0 (DFS level0/XO), MCLK divider for ~9.6 MHz. */
++	swr(sst.se, SSE_CLK_SEL, 0);
++	swr(sst.se, SSE_MCLK, (1u << 4) | 1u);   /* div=2, src=XO */
+
++	/* SPI mode 0 (CPOL=0 CPHA=0), CS0 active-low, loopback off. */
++	swr(sst.se, 0x80c, 1);    /* word-count threshold */
++	swr(sst.se, 0x810, 0);
++	swr(sst.se, 0x814, ((hrx >> 16) & 0x3fu) - 1u);
+
++	/* Enable standard FIFO events. */
++	swr(sst.se, SSE_IRQ_EN, SSE_EVENTS);
+
++	if ((srd(sst.se, SSE_TX_COUNT) & 0xfffffffu) ||
++	    (srd(sst.se, SSE_RX_COUNT) & 0x1ffffffu)) {
++		printf("SURYA TOUCH: inherited FIFO data; skipping\n");
++		return false;
++	}
++	return true;
++}
++
++/* ---- Full-duplex SPI FIFO transfer ---- */
++/* tx_len bytes sent, rx_len bytes received simultaneously.
++ * Both tx and rx must be non-NULL; rx_len >= tx_len. */
++static int
++surya_spi_xfer(const uint8_t *tx, unsigned tx_len,
++    uint8_t *rx, unsigned rx_len)
++{
++	if (sst.dead || tx_len > 64 || rx_len > 64 || rx_len < tx_len) {
++		return EIO;
++	}
++	if (!swait_clear(sst.se, SSE_STATUS, 1u)) {
++		sst.dead = true;
++		return EBUSY;
++	}
++	swr(sst.se, SSE_IRQ_CLR, 0xffffffffu);
++	/* Full-duplex: set both TX and RX lengths to rx_len.
++	 * TX_LEN controls the transfer; bytes beyond tx_len are zero-padded. */
++	swr(sst.se, SSE_TX_LEN, rx_len);
++	swr(sst.se, SSE_RX_LEN, rx_len);
++	/* SPI full-duplex command: opcode=1 in bits [31:27] for SPI. */
++	swr(sst.se, SSE_CMD, (1u << 27));
+
++	unsigned sent = 0, got = 0;
++	int err = ETIMEDOUT;
++	for (unsigned i = 0; i < 20000 && !sst.dead; ++i) {
++		uint32_t irq = srd(sst.se, SSE_IRQ);
++		if (irq & SSE_ERRORS) {
++			err = EIO;
++			/* Wait for DONE so engine returns to idle. */
++			for (unsigned j = 0; j < 5000 && !(irq & SSE_DONE); ++j) {
++				delay(1);
++				irq = srd(sst.se, SSE_IRQ);
++			}
++			swr(sst.se, SSE_IRQ_CLR, irq);
++			break;
++		}
++		/* Push TX bytes into FIFO word by word. */
++		if (sent < tx_len && (irq & (1u << 30))) {
++			unsigned chunk = tx_len - sent;
++			if (chunk > 4) chunk = 4;
++			uint32_t word = 0;
++			for (unsigned j = 0; j < chunk; ++j) {
++				word |= (uint32_t)tx[sent + j] << (8u * j);
++			}
++			swr(sst.se, SSE_TX, word);
++			sent += chunk;
++		}
++		/* Drain RX FIFO. */
++		uint32_t count = srd(sst.se, SSE_RX_COUNT) & 0x1ffffffu;
++		while (count--) {
++			uint32_t word = srd(sst.se, SSE_RX);
++			for (unsigned j = 0; j < 4 && got < rx_len; ++j) {
++				rx[got++] = (uint8_t)(word >> (8u * j));
++			}
++		}
++		if (irq & SSE_DONE) {
++			swr(sst.se, SSE_IRQ_CLR, irq);
++			err = (got == rx_len) ? 0 : EIO;
++			break;
++		}
++		swr(sst.se, SSE_IRQ_CLR, irq & ((1u<<26)|(1u<<27)|(1u<<30)));
++		delay(1);
++	}
++	return err;
++}
++
++/* ---- Novatek SPI fast-read ---- */
++/* Read 'len' bytes from NT36672C address 'addr' via the fast-read path.
+ * Protocol: send [addr_hi|0x80, addr_mid, addr_lo], then receive
+ * (1 dummy + len) bytes; real data starts at rbuf[1]. */
++static int
++nvt_read(uint32_t addr, uint8_t *out, unsigned len)
++{
++	if (len + 1u + 3u > NVT_RX_BUF_LEN + 3u) {
++		return EINVAL;
++	}
++	uint8_t tx[NVT_RX_BUF_LEN] = {0};
++	uint8_t rx[NVT_RX_BUF_LEN] = {0};
++	unsigned total = 3u + NVT_SPI_DUMMY + len;
++	tx[0] = (uint8_t)((addr >> 16) & 0x7fu) | 0x80u; /* read bit set */
++	tx[1] = (uint8_t)((addr >> 8) & 0xffu);
++	tx[2] = (uint8_t)(addr & 0xffu);
++	/* bytes [3 .. 3+dummy+len-1] are zero (MOSI don't-care during read) */
++	int err = surya_spi_xfer(tx, total, rx, total);
++	if (!err) {
++		/* data starts after cmd(3) + dummy(1) */
++		for (unsigned i = 0; i < len; ++i) {
++			out[i] = rx[3u + NVT_SPI_DUMMY + i];
++		}
++	}
++	return err;
++}
++
++/* ---- Touch report injector ---- */
++static void
++nvt_report(uint32_t mask, const int *x, const int *y)
++{
++	for (unsigned id = 0; id < NVT_MAX_FINGERS; ++id) {
++		uint32_t bit = 1u << id;
++		if (mask & bit) {
++			if (!(sst.active & bit) || x[id] != sst.x[id] || y[id] != sst.y[id]) {
++				sweet_hid_touch((int)id, 1, x[id], y[id]);
++			}
++			sst.x[id] = x[id];
++			sst.y[id] = y[id];
++		} else if (sst.active & bit) {
++			sweet_hid_touch((int)id, 0, sst.x[id], sst.y[id]);
++		}
++	}
++	sst.active = mask;
++}
++
++/* ---- Parse one NT36672C touch frame ---- */
++static int
++nvt_poll(void)
++{
++	uint8_t buf[NVT_POINT_DATA_LEN] = {0};
++	int err = nvt_read(NVT_FAST_ADDR, buf, NVT_POINT_DATA_LEN);
++	if (err) {
++		return err;
++	}
++	/* buf[0] is the first byte of point data (after dummy). Novatek places
++	 * a global status nibble in buf[0] bits[7:4]; skip if all-zeros (no event). */
++	if ((buf[0] & 0xf0u) == 0) {
++		return 0; /* no new frame */
++	}
++	int x[NVT_MAX_FINGERS] = {0}, y[NVT_MAX_FINGERS] = {0};
++	uint32_t mask = 0;
++	for (unsigned i = 0; i < NVT_MAX_FINGERS; ++i) {
++		unsigned off = 1u + 6u * i;
++		if (off + 5u >= NVT_POINT_DATA_LEN) {
++			break;
++		}
++		uint8_t state = buf[off] & 0x07u;
++		unsigned fid  = (buf[off] >> 3) & 0x0fu;
++		if (fid >= NVT_MAX_FINGERS) {
++			continue;
++		}
++		if (state == 0x01u || state == 0x02u) { /* down or moving */
++			unsigned px = ((unsigned)buf[off+1] << 4) | ((unsigned)buf[off+3] >> 4);
++			unsigned py = ((unsigned)buf[off+2] << 4) | ((unsigned)buf[off+3] & 0x0fu);
++			if (px >= (unsigned)NVT_WIDTH || py >= (unsigned)NVT_HEIGHT) {
++				continue; /* out-of-bounds: ignore slot */
++			}
++			mask |= 1u << fid;
++			x[fid] = (int)px;
++			y[fid] = (int)py;
++		}
++		/* state != 1/2 means UP; leave bit clear in mask */
++	}
++	nvt_report(mask, x, y);
++	return 0;
++}
++
++/* ---- Kernel thread ---- */
++static void
++surya_touch_thread(void *arg, wait_result_t result)
++{
++	unsigned delay_s = 30;
++	(void)arg; (void)result;
++	(void)PE_parse_boot_argn("sweettouchdelay", &delay_s, sizeof(delay_s));
++	printf("SURYA TOUCH: thread starting in %u s\n", delay_s);
++	swait(delay_s * 1000u);
++
++	printf("SURYA TOUCH: mapping SE0/GCC/TLMM\n");
++	sst.se    = ml_io_map(SURYA_SE0_PA,   0x4000);
++	sst.gcc   = ml_io_map(SURYA_GCC_PA,   0x60000);
++	sst.gpio  = ml_io_map(SURYA_TLMM_PA,  SURYA_TLMM_SIZE);
++	sst.gpio_n= ml_io_map(SURYA_TLMM_N_PA,SURYA_TLMM_N_SIZE);
++	if (!sst.se || !sst.gcc || !sst.gpio || !sst.gpio_n) {
++		printf("SURYA TOUCH: MMIO mapping failed\n");
++		goto out;
++	}
++
++	/* Enable GCC clocks for SE0. */
++	if (!surya_clocks()) {
++		goto out;
++	}
++
++	/* Configure SPI bus GPIOs: GPIO 49-52 as qup00 (mux=1).
++	 * All SPI pins: no pull, 6 mA drive, peripheral mux (not output). */
++	sgpio(sst.gpio_n, 49 - 128, 1, 0, 2, false); /* MOSI */
++	sgpio(sst.gpio_n, 50 - 128, 1, 0, 2, false); /* MISO */
++	sgpio(sst.gpio_n, 51 - 128, 1, 0, 2, false); /* SCLK */
++	sgpio(sst.gpio_n, 52 - 128, 1, 0, 2, false); /* CS   */
+
++	/* GPIO 9 = IRQ input with pull-up. */
++	sgpio(sst.gpio, 9, 0, 3, 2, false);
+
++	/* GPIO 8 = reset: drive high first, then pulse low to reset the IC. */
++	sgpio(sst.gpio, 8, 0, 0, 2, true);   /* output, drive high */
++	sgpio_out(sst.gpio, 8, true);
++	swait(10);
++	sgpio_out(sst.gpio, 8, false);        /* reset pulse low    */
++	swait(5);
++	sgpio_out(sst.gpio, 8, true);         /* release reset      */
++	swait(200);                           /* IC boot time       */
+
++	/* Init GENI SE0 as SPI master. */
++	if (!surya_se_init()) {
++		goto out;
++	}
+
++	/* Probe: read chip version from NT36672C. */
++	uint8_t ver[4] = {0};
++	int perr = nvt_read(NVT_CHIP_VER_ADDR, ver, sizeof(ver));
++	printf("SURYA TOUCH: NT36672C probe err=%d ver=%02x%02x%02x%02x irq=%d\n",
++	    perr, ver[0], ver[1], ver[2], ver[3],
++	    (int)sgpio_in(sst.gpio, 9));
++	if (perr) {
++		printf("SURYA TOUCH: probe failed; stopping\n");
++		goto out;
++	}
+
++	printf("SURYA TOUCH: NT36672C ready, 1080x2400, polling every 10 ms\n");
++	unsigned errors = 0, ticks = 0;
++	while (!sst.dead) {
++		/* Poll continuously when fingers are down.
++		 * When idle, also poll every ~100 ms even if IRQ is high. */
++		bool irq_low = !sgpio_in(sst.gpio, 9); /* active-low IRQ */
++		if (sst.active || irq_low || (++ticks % 10u) == 0) {
++			int err = nvt_poll();
++			if (err) {
++				if ((errors++ % 100u) == 0) {
++					printf("SURYA TOUCH: poll err=%d\n", err);
++				}
++				if (errors == 10) {
++					nvt_report(0, sst.x, sst.y); /* lift all fingers */
++				}
++			} else {
++				errors = 0;
++			}
++		}
++		swait(10);
++	}
++	nvt_report(0, sst.x, sst.y);
++out:
++	(void)thread_terminate(current_thread());
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static void
++surya_touch_init(void)
++{
++	int enabled = 1;
++	thread_t thread;
++	if (sst.started) {
++		return;
++	}
++	sst.started = true;
++	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
++	if (!enabled) {
++		printf("SURYA TOUCH: disabled (sweettouch=0)\n");
++		return;
++	}
++	kern_return_t kr = kernel_thread_start(surya_touch_thread, NULL, &thread);
++	if (kr == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("SURYA TOUCH: kernel_thread_start failed %d\n", kr);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_SURYA */

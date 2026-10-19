@@ -71,7 +71,7 @@ def validate_patches(verbose=False):
             print(f"    - {err}")
         return False
 
-    print(green(f"[✓] Validated {len(patch_files)} patches (0001-{len(patch_files):04d} contiguous, format OK)"))
+    print(green(f"[OK] Validated {len(patch_files)} patches (0001-{len(patch_files):04d} contiguous, format OK)"))
     return True
 
 
