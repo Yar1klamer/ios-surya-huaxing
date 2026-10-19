@@ -25,7 +25,7 @@ The previous independent Poco project is suspended and preserved at
   entry points, including the L11C rail vote, regardless of copied boot arguments.
   The RAM-disk profile disables disk writes and persistent logging.
   An explicit measured-controller ADT can enable a read-only UFS probe while
-  retaining the working RAM-disk root; native GPT identification passed on the Poco.
+  retaining the working RAM-disk root; native GPT identification passed on the Poco, including the larger-RAM test.
 - Separate Poco shim output under `shim/out/surya/`. Payload failure halts instead
   of starting the Redmi UFS probe. Segment bounds are checked before RAM copies.
 - A live-FDT check requires RAM coverage and rejects fixed reservation overlap

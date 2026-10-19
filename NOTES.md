@@ -39,8 +39,17 @@ SHA256 7eadc61f74ef9784940a282564e61b1f6d8d21f6414efad7b7aba6b0f828e9d9,
 Prepared highmem read-only image research/native-tests/highmem-probe/:
 SHA256 c5e1df207abebb97425d77cfdba315bbabebefdf9340964b20a09d3b3c1de1c7.
 Owner ready, exactly one device; temporary fastboot boot Sending OKAY 0.483s,
-Booting OKAY 5.093s, exit0. SCREEN RESULT PENDING. Native 3.9375 GiB RAM +
-read-only UFS/PID1 regression requested. Never confuse this image with the
+Booting OKAY 5.093s, exit0. SCREEN CONFIRMED PASS via
+codex-clipboard-6837da7d-1530-42cb-89a5-08c6a22b1a4b.png: UFS status=0,
+userdata first block 0x384a18, 103245 MiB, read-only; DMA 0x1041ac000;
+PID1 running and repeated heartbeats. Native 3.9375 GiB + UFS regression passed.
+All preparation for first Apple launchd boot attempt is complete. NEXT ACTION
+REQUIRES EXPLICIT OWNER APPROVAL: replace userdata with the verified sparse
+Apple root and temporarily boot research/apple-root-ready/boot-apple-root.img.
+This replaces ColorOS apps/settings/personal files; no personal-file backup was
+made. Review research/userland-ready/INSTALL-PLAN.md. No authorization inferred
+from screenshots/readiness or upstream owner's historical deletion approvals.
+Do not flash boot/dtbo/recovery/GPT; do not lock bootloader or erase metadata. Never confuse this image with the
 writable Apple-root image archived separately. No partition writes.
 Both Apple-root and highmem-probe ADTs generated under
 shim/out/surya/ using actual hardware evidence and the real D22AP product ADT.
