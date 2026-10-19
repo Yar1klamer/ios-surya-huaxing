@@ -19,7 +19,11 @@ using existing sweetnull logger for launchd,xpcproxy,bluetoothd,fairplayd.H2,
 triald,backboardd,SpringBoard. No filesystem reflash or job deletion needed.
 24 host tests + repo validation passed. Diagnostic boot image at
 research/apple-root-ready/boot-apple-diagnostics.img; checksum manifest beside
-it. Not yet booted; return phone to Fastboot to test. Full GUI still unconfirmed.
+it. Owner replied ready; exactly one device found and checksum verified.
+Diagnostic temporary boot sent: Sending OKAY0.479s, Booting OKAY5.093s,
+exit0,total5.583s. No filesystem reflash. Log boot-apple-diagnostics.log.
+SCREEN RESULT PENDING: capture lines |launchd|, |xpcproxy|, |bluetoothd|,
+|fairplayd.H2| or CRASH reason. No full GUI or loop resolution claimed.
 
 
 OWNER APPROVAL RECEIVED: user replied "yes" to the explicit request to replace
