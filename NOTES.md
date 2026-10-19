@@ -17,10 +17,12 @@ Owner replied ready in Fastboot for a larger-RAM READ-ONLY regression test.
 Preparing patch 0086: same default read-only probe plus separate bounded Apple
 root profile. Read/write requests and flush allowed only after native GPT
 bounds match explicit ADT contract and ufsrw=1; only the 16 GiB image window
-is advertised, no partition tail. No input/USB/PMIC/persistent-log activation.
+is advertised, no partition tail. Before arming writes, a read of the volume
+header must confirm HFSX version 5, 4096-byte allocation blocks and the exact
+expected image block count; Android/FBE data is refused. No input/USB/PMIC/persistent-log activation.
 Avoid repeated UFS initialization after an already-mounted UFS root.
 The pure C command/bounds policy compiled and tested on host across all 256
-opcodes in read-only and writable states; 22 host tests and 86-patch validation
+opcodes in read-only and writable states; 23 host tests and 86-patch validation
 pass. Apple-root payload builder requires the new kernel marker, correct
 command line, native storage proof, real product identity, no substituted test
 RAM disk and >=2 GiB RAM. Proposed root/test RAM 0x100000000 + 0xfc000000.

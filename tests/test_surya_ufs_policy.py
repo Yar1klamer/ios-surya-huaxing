@@ -2,6 +2,7 @@
 import ctypes
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -22,7 +23,8 @@ class StoragePolicyTests(unittest.TestCase):
         (root / 'wrapper.c').write_text('#include "policy.h"\n'
             'int command(unsigned op,int out,int rw){return surya_ufs_command_allowed(op,out,rw);}\n'
             'int bounds(unsigned long long a,unsigned long long n,unsigned long long x,'
-            'unsigned long long y,unsigned long long z){return surya_ufs_root_range(a,n,x,y,z);}')
+            'unsigned long long y,unsigned long long z){return surya_ufs_root_range(a,n,x,y,z);}'
+            'int volume(const unsigned char *h,unsigned long long n){return surya_hfsx_volume_matches(h,n);}')
         subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Werror',
                         str(root / 'wrapper.c'), '-o', str(root / 'policy.so')], check=True)
         cls.lib = ctypes.CDLL(str(root / 'policy.so'))
@@ -49,3 +51,12 @@ class StoragePolicyTests(unittest.TestCase):
                        (0xffffffff, 10, 0xffffffff, 10, 2),
                        (0x100000000, 10, 0x100000000, 10, 2)]:
             self.assertFalse(self.lib.bounds(*values), values)
+
+    def test_root_write_gate_requires_expected_hfsx_volume(self):
+        header = bytearray(48)
+        header[:4] = b'HX\x00\x05'
+        struct.pack_into('>II', header, 40, 4096, 4194304)
+        self.assertTrue(self.lib.volume(bytes(header), 4194304))
+        self.assertFalse(self.lib.volume(bytes(header), 4194303))
+        header[:4] = bytes.fromhex('1020f5f2')  # Android F2FS superblock
+        self.assertFalse(self.lib.volume(bytes(header), 4194304))
