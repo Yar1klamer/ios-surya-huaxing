@@ -18,12 +18,9 @@ Prepared clean GUI boot image:
 - Updated tools/mksurya-apple-root.py with --gui option.
 - Added test_apple_gui_payload_keeps_exact_storage_policy to tests/test_surya.py (25 passed).
 - Built clean GUI payload shim/out/surya/apple-gui-payload.bin (16590176 bytes) and packaged boot image research/apple-root-ready/boot-apple-gui.img (20058112 bytes, SHA256: 7b50e56a716cce4030bea4d08630f84d976c2303f19fcb3c6dac4d5581009f5a).
-- Verified unpacked image components against stock DTB and shim Image.
-- Ready for temporary boot test (fastboot boot). No filesystem reflash or partition write.
-
-
-
-
+- Clean GUI boot image sent via fastboot boot: Sending OKAY 0.485s, Booting OKAY 5.093s, exit 0, total 5.591s.
+- No filesystem reflash or partition writes. Boot log at research/apple-root-ready/boot-apple-gui.log.
+- SCREEN RESULT PENDING: waiting for user confirmation of clean iOS Lock Screen without console log overlay.
 OWNER APPROVAL RECEIVED: user replied "yes" to the explicit request to replace
 userdata with the verified Apple filesystem and temporarily boot Apple launchd,
 after disclosure that ColorOS apps/settings/personal files are replaced and no
