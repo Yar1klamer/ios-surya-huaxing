@@ -95,6 +95,17 @@ class SuryaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             surya.validate_payload(bad)
 
+    def test_apple_gui_payload_keeps_exact_storage_policy(self):
+        b = payload(apple=True)
+        cmd = surya.APPLE_GUI_CMDLINE.encode()
+        self.assertLess(len(cmd), mkpayload.BOOT_LINE_LENGTH)
+        b[0x48:mkpayload.SEG_TABLE] = bytes(mkpayload.SEG_TABLE - 0x48)
+        b[0x48:0x48 + len(cmd)] = cmd
+        self.assertEqual(surya.validate_payload(b)['stage'], 'apple-root')
+        bad = b.replace(b'sweetusb=0', b'sweetusb=1')
+        with self.assertRaises(ValueError):
+            surya.validate_payload(bad)
+
     def test_valid_ramdisk_payload(self):
         self.assertEqual(surya.validate_payload(payload())['board'], 'surya')
 
