@@ -5,7 +5,8 @@ Adaptation of [ios-sweet](https://github.com/dipa-studio/ios-sweet), pinned at
 SM7150 / Snapdragon 732G**. Other Poco X3 variants are not targets.
 
 **Native SURYA XNU boots the RAM disk and runs the static test PID 1.**
-Apple launchd and the iOS interface have not booted on this device.
+The Apple filesystem is installed with owner approval; the first Apple-root
+boot attempt has been sent. Its actual launchd/UI result is pending.
 Upstream Redmi Note 10 Pro results belong to that device. Its original
 [README](README.sweet.md) is preserved as reference; its userdata-erasing
 installation steps are not the procedure for this Poco port.
@@ -89,8 +90,9 @@ userspace: launchd, dyld, backboardd, SpringBoard and arm64 dyld caches.
 `tools/pack-ios-userland.sh` packages a new local image. Filesystem checks passed
 and executable hashes matched after read-back. Apple artifacts remain untracked.
 
-This image has not booted on the Poco. UFS remains disabled; activation, display
-and input support still need physical validation. No iOS/XNU QEMU boot tests
+The verified image was installed to userdata with explicit owner approval.
+UFS GPT reads passed; the bounded Apple-root boot attempt awaits physical logs.
+Activation, GUI, input and writable-root runtime remain unproven. No iOS/XNU QEMU boot tests
 will be run under the current owner's preference.
 
 ## Verification and remaining work
@@ -111,5 +113,5 @@ establish stock ABL panel continuity or LCD refresh behavior.
 
 A physical Poco test confirmed RAM-disk root `md0`, the static test program
 running as PID 1, and repeated heartbeat messages after patch 0084. The original
-framebuffer mapping panic is resolved for this test. No partitions have been
-flashed or erased. See [NOTES.md](NOTES.md) for evidence and remaining work.
+framebuffer mapping panic is resolved for this test. After those tests, the owner approved replacing userdata with the Apple root.
+All 93 sparse flash chunks completed successfully; other partitions were not targeted. See [NOTES.md](NOTES.md) for evidence and remaining work.

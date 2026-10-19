@@ -29,7 +29,15 @@ Apple boot image hash reverified. Requested owner manual Power+VolumeDown
 Fastboot re-entry after the large transfer; do not run commands against hung
 ABL. Next: exactly one device, temporary boot research/apple-root-ready/
 boot-apple-root.img (7eadc61f...28e9d9), then obtain actual screen evidence.
-Apple launchd has not yet been booted or proven.
+FIRST APPLE ROOT BOOT ATTEMPT SENT after owner manual Fastboot re-entry.
+Exactly one phone, boot hash verified; fastboot boot Sending OKAY0.483s,
+Booting OKAY5.094s, exit0,total5.587s. This image uses rd=ufsroot0, native
+userdata HFSX root, real /sbin/launchd and dyld/shared cache; no test RAMdisk.
+Log research/apple-root-ready/boot-apple-first.log; result JSON beside it.
+SCREEN RESULT PENDING. Do not equate Fastboot success with launchd running.
+Owner asked for latest exec/launchd/dyld/panic output; inspect that next.
+Approval covers this installation and boot; no repeat approval needed for
+non-destructive diagnosis/temporary kernel tests. No other partitions written.
 
 
 Native read-only UFS test PASSED: photo
