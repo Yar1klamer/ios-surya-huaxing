@@ -11,10 +11,17 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 Latest source milestone: 9c370c9 (userspace assembly + live RAM guard), then
 98ed9c5 (native panic evidence + patch 0083). Both pushed to owner fork main
-and codex/surya-port. Diagnostic CI run 39306668551 is in progress:
+and codex/surya-port. Diagnostic CI run 39306668551 PASSED (8m21s):
 https://github.com/arbuxiktech/ios-surya/actions/runs/39306668551
-Owner returned phone to Fastboot and replied ready for the diagnostic temporary
-boot. No repeat authorization needed for that test; never flash partitions.
+Owner returned phone to Fastboot and replied ready. Diagnostic native temporary
+boot completed: Sending OKAY 0.488s, Booting OKAY 5.094s, exit 0. SCREEN PENDING.
+Kernel SHA256 865b589b2b8b75c23623991956f05e9177d3a8001410fca7c6cf8370cc1b9fbb;
+plain arm64, artifact checksum and both diagnostic strings verified.
+Boot image SHA256 b533f4a56dc236453264cb6a613d6da4eb4646807837b32a0c8c47ee461828e0;
+payload bytes verified inside boot image. Archived ignored image/manifest at
+research/native-tests/mapdiag/. First test archived at first-pmap-panic/.
+No partitions flashed. Next: obtain photo containing SURYA early io_map and
+SURYA pmap_map_bd addresses. Do not claim diagnostic test fixed anything yet.
 
 
 Implementation committed locally as `13d0eff`; handoff commit `43f5492`. Host
