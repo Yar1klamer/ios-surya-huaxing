@@ -27,6 +27,27 @@ pass. Apple-root payload builder requires the new kernel marker, correct
 command line, native storage proof, real product identity, no substituted test
 RAM disk and >=2 GiB RAM. Proposed root/test RAM 0x100000000 + 0xfc000000.
 No Apple-root image has been booted; no install or erase authorized yet.
+Patch 0086 initial source commit 1a2c3e0, then HFSX write gate commit 4e78bf2.
+Initial CI 39313833622 was superseded/canceled by the HFSX gate update; active
+CI 39314284814 https://github.com/arbuxiktech/ios-surya/actions/runs/39314284814
+PASSED. Kernel SHA256
+31ae81a9affad889f4ddf8301313576654d04905cd98efb72147f3633596da10
+verified, plain arm64 and both root-bound/HFSX gate strings checked.
+Prepared Apple boot image research/apple-root-ready/boot-apple-root.img:
+SHA256 7eadc61f74ef9784940a282564e61b1f6d8d21f6414efad7b7aba6b0f828e9d9,
+20058112 bytes. Embedded root payload verified. NOT BOOTED/NOT AUTHORIZED.
+Prepared highmem read-only image research/native-tests/highmem-probe/:
+SHA256 c5e1df207abebb97425d77cfdba315bbabebefdf9340964b20a09d3b3c1de1c7.
+Owner ready, exactly one device; temporary fastboot boot Sending OKAY 0.483s,
+Booting OKAY 5.093s, exit0. SCREEN RESULT PENDING. Native 3.9375 GiB RAM +
+read-only UFS/PID1 regression requested. Never confuse this image with the
+writable Apple-root image archived separately. No partition writes.
+Both Apple-root and highmem-probe ADTs generated under
+shim/out/surya/ using actual hardware evidence and the real D22AP product ADT.
+Reviewable installation plan at research/userland-ready/INSTALL-PLAN.md
+(ignored). It explicitly replaces userdata/personal files; no backup of owner
+personal files was made here. Do not flash or boot writable root until explicit
+owner approval; first validate the new kernel with highmem read-only probe.
 
 
 Owner explicitly requests Apple launchd and daemons next. Android ADB hardware
