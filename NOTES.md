@@ -27,7 +27,35 @@ SCSI layer permits TEST UNIT READY and READ(10) only, forbids data-out and all
 other opcodes; su.writable forcibly false regardless of boot args. No PMIC,
 input, USB, sampling or persistent logging started from the probe. Uses ABL
 host state, aborts if controller not ready/outstanding requests/no 64-bit DMA.
-18 host tests and 85-patch repo validation pass. Native probe result pending.
+18 host tests and 85-patch repo validation pass. Native probe image booted through Fastboot; SCREEN RESULT PENDING.
+Kernel SHA256 9fe6453f2b97b26bc037423a984c98d2265ef8a0745930ca947b9e327f8bb270
+verified against artifact checksum, plain arm64 and diagnostic strings.
+Boot image SHA256 3a3e5cf94c5c6ad70e17e95f16985357acd02ae6b05830762915b3aef0b5def6;
+embedded payload verified. Archived research/native-tests/ufsprobe/.
+Requested adb reboot bootloader; initial Fastboot enumeration absent, owner
+manually returned to Fastboot, then exactly one device detected. Temporary
+fastboot boot: Sending OKAY 0.482s, Booting OKAY 5.095s, exit 0. No flashing.
+Next: obtain SURYA UFS PROBE status and userdata first block/size from screen.
+Expected first block 3688984, size roughly 103245 MiB (26430947 x4096).
+If status=0 and bounds match, prepare Apple launchd root boot profile with
+appropriate memory and logging; seek explicit destructive installation approval
+only once the image and concrete installation/backup plan are reviewable.
+Probe source commit caa65a0 pushed main/codex/surya-port; CI 39311327749:
+https://github.com/arbuxiktech/ios-surya/actions/runs/39311327749 PASSED.
+Native probe ADT generated at shim/out/surya/ufs-probe.adt, from the actual
+Android memory/reg and storage-evidence.json; keeps the proven 512 MiB RAM.
+Actual userdata is sda16, LUN 0 (SCSI 0:0:0:0), first 29511872 x512,
+length 211447576 x512. Expected native first UFS block 3688984, count 26430947.
+16 GiB root fits. Read-only identification does not authorize writing it.
+Sparse root prepared offline: /root/surya-userland/ios16-surya-root.simg,
+12141146972 bytes; SHA256
+a2d2982a6600398c4ef22c9251d8d2ad4a7abd28f79c6c3e73f778d815ba2caa.
+simg2img roundtrip reproduced original 16 GiB raw SHA256 exactly; Windows
+copy into research/userland-ready completed; Windows sparse SHA256 independently matched. No firmware/partition writes.
+Live reserved-memory scan found no fixed reservation >= 4 GiB. For a future
+Apple userspace root, upper bank 0x100000000 + 0xfcc00000 could support a
+32 MiB-aligned 0xfc000000 managed size; still subject to runtime FDT guard.
+Do not change memory size in the first storage probe (isolate the new device).
 Apple root is prepared but still local; launchd has NOT run. No installation
 or userdata erase approval has been requested or granted in this adaptation.
 

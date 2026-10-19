@@ -24,6 +24,8 @@ The previous independent Poco project is suspended and preserved at
 - SURYA kernel refuses unverified Redmi touch/PMIC/USB/UFS routines at their
   entry points, including the L11C rail vote, regardless of copied boot arguments.
   Storage writes and persistent logging are not reachable in this target.
+  An explicit measured-controller ADT can enable a read-only UFS probe while
+  retaining the working RAM-disk root; its native result is pending.
 - Separate Poco shim output under `shim/out/surya/`. Payload failure halts instead
   of starting the Redmi UFS probe. Segment bounds are checked before RAM copies.
 - A live-FDT check requires RAM coverage and rejects fixed reservation overlap
