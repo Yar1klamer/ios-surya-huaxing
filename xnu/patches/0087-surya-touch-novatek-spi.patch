@@ -2,7 +2,7 @@ diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
 index 6ac690f..31727ee 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -635,11 +635,526 @@ out:
+@@ -635,11 +635,554 @@
  	thread_block(THREAD_CONTINUE_NULL);
  }
  
@@ -47,13 +47,8 @@ index 6ac690f..31727ee 100644
 +                         (1u << 13) | (3u << 24) | (3u << 28))
 +#define SSE_EVENTS      (SSE_DONE | SSE_ERRORS | (1u << 26) | (1u << 27) | (1u << 30))
 +
-+/* Novatek NT36672C protocol constants */
-+#define NVT_FAST_ADDR       0x3f310u      /* SPI event buffer read addr  */
-+#define NVT_CHIP_VER_ADDR   0x3f004u      /* chip version trim           */
++/* Novatek NT36672C protocol constants (from stock surya kernel nt36xxx disassembly) */
 +#define NVT_MAX_FINGERS     10u
-+#define NVT_POINT_DATA_LEN  78u
-+#define NVT_SPI_DUMMY       1u            /* dummy bytes before real data */
-+#define NVT_RX_BUF_LEN      (3u + NVT_SPI_DUMMY + NVT_POINT_DATA_LEN)
 +#define NVT_WIDTH           1080
 +#define NVT_HEIGHT          2400
 +
@@ -256,7 +251,7 @@ index 6ac690f..31727ee 100644
 +	uint32_t count;
 +	unsigned m;
 +
-+	if (sst.dead || tx_len > 90 || rx_len > 90 || rx_len < tx_len) {
++	if (sst.dead || tx_len > 90 || rx_len > 90 || rx_len != tx_len || tx_len == 0) {
 +		return EIO;
 +	}
 +	if (!surya_touch_wait_clear(sst.se, SSE_STATUS, 1u)) {
@@ -299,7 +294,10 @@ index 6ac690f..31727ee 100644
 +		while (count--) {
 +			word = surya_touch_rd(sst.se, SSE_RX);
 +			for (m = 0; m < 4 && got < rx_len; ++m) {
-+				rx[got++] = (uint8_t)(word >> (8u * m));
++				if (rx) {
++					rx[got] = (uint8_t)(word >> (8u * m));
++				}
++				got++;
 +			}
 +		}
 +
@@ -315,31 +313,59 @@ index 6ac690f..31727ee 100644
 +}
 +
 +static int
-+surya_nvt_read(uint32_t addr, uint8_t *out, unsigned len)
++surya_touch_spi_write(const uint8_t *tx, unsigned len)
 +{
-+	uint8_t tx[NVT_RX_BUF_LEN];
-+	uint8_t rx[NVT_RX_BUF_LEN];
-+	unsigned total;
-+	int err;
++	uint8_t buf[96];
++	uint8_t dummy_rx[96];
 +	unsigned i;
 +
-+	if (len + 1u + 3u > NVT_RX_BUF_LEN) {
++	if (len == 0 || len > 90) {
 +		return EINVAL;
 +	}
-+	memset(tx, 0, sizeof(tx));
-+	memset(rx, 0, sizeof(rx));
-+	total = 3u + NVT_SPI_DUMMY + len;
-+	tx[0] = (uint8_t)(((addr >> 16) & 0x7fu) | 0x80u);
-+	tx[1] = (uint8_t)((addr >> 8) & 0xffu);
-+	tx[2] = (uint8_t)(addr & 0xffu);
++	for (i = 0; i < len; ++i) {
++		buf[i] = tx[i];
++	}
++	buf[0] |= 0x80u;
++	return surya_touch_spi_xfer(buf, len, dummy_rx, len);
++}
++
++static int
++surya_touch_spi_read(uint8_t reg, uint8_t *out, unsigned len)
++{
++	uint8_t tx[96];
++	uint8_t rx[96];
++	unsigned total = len + 2u;
++	unsigned i;
++	int err;
++
++	if (len == 0 || total > 90) {
++		return EINVAL;
++	}
++	memset(tx, 0, total);
++	tx[0] = reg & 0x7fu;
++	tx[1] = 0x00;
 +
 +	err = surya_touch_spi_xfer(tx, total, rx, total);
-+	if (!err) {
++	if (!err && out) {
 +		for (i = 0; i < len; ++i) {
-+			out[i] = rx[3u + NVT_SPI_DUMMY + i];
++			out[i] = rx[2u + i];
 +		}
 +	}
 +	return err;
++}
++
++static int
++surya_nvt_check_trim(uint8_t *trim_out)
++{
++	const uint8_t page_cmd[3] = {0xff, 0x03, 0xec};
++	int err;
++
++	err = surya_touch_spi_write(page_cmd, 3);
++	if (err) {
++		return err;
++	}
++	delay(1000);
++	return surya_touch_spi_read(0x4e, trim_out, 6);
 +}
 +
 +static void
@@ -365,41 +391,41 @@ index 6ac690f..31727ee 100644
 +static int
 +surya_nvt_poll(void)
 +{
-+	uint8_t buf[NVT_POINT_DATA_LEN];
++	uint8_t pts[65];
 +	int err;
 +	int x[NVT_MAX_FINGERS];
 +	int y[NVT_MAX_FINGERS];
 +	uint32_t mask = 0;
 +	unsigned i;
 +	unsigned off;
++	uint8_t status;
 +	uint8_t state;
 +	unsigned fid;
 +	unsigned px, py;
 +
-+	memset(buf, 0, sizeof(buf));
++	memset(pts, 0, sizeof(pts));
 +	memset(x, 0, sizeof(x));
 +	memset(y, 0, sizeof(y));
 +
-+	err = surya_nvt_read(NVT_FAST_ADDR, buf, NVT_POINT_DATA_LEN);
++	err = surya_touch_spi_read(0x00, pts, 65);
 +	if (err) {
 +		return err;
 +	}
-+	if ((buf[0] & 0xf0u) == 0) {
-+		return 0;
-+	}
++
 +	for (i = 0; i < NVT_MAX_FINGERS; ++i) {
-+		off = 1u + 6u * i;
-+		if (off + 5u >= NVT_POINT_DATA_LEN) {
-+			break;
++		off = 6u * i;
++		status = pts[off];
++		if (!status) {
++			continue;
 +		}
-+		state = buf[off] & 0x07u;
-+		fid   = (buf[off] >> 3) & 0x0fu;
++		fid = (status >> 3) - 1u;
 +		if (fid >= NVT_MAX_FINGERS) {
 +			continue;
 +		}
-+		if (state == 0x01u || state == 0x02u) {
-+			px = ((unsigned)buf[off + 1] << 4) | ((unsigned)buf[off + 3] >> 4);
-+			py = ((unsigned)buf[off + 2] << 4) | ((unsigned)buf[off + 3] & 0x0fu);
++		state = status & 7u;
++		if (state == 1u || state == 2u) {
++			px = ((unsigned)pts[off + 1] << 4) | ((unsigned)pts[off + 3] >> 4);
++			py = ((unsigned)pts[off + 2] << 4) | ((unsigned)pts[off + 3] & 0x0fu);
 +			if (px >= (unsigned)NVT_WIDTH || py >= (unsigned)NVT_HEIGHT) {
 +				continue;
 +			}
@@ -415,12 +441,13 @@ index 6ac690f..31727ee 100644
 +static void
 +surya_touch_thread(void *arg, wait_result_t result)
 +{
-+	unsigned delay_s = 10;
-+	uint8_t ver[4];
-+	int perr;
++	unsigned delay_s = 3;
++	uint8_t trim[6];
++	int perr = -1;
 +	unsigned errors = 0, ticks = 0;
 +	bool irq_low;
 +	int poll_err;
++	unsigned attempt;
 +	(void)arg;
 +	(void)result;
 +
@@ -451,28 +478,29 @@ index 6ac690f..31727ee 100644
 +	/* Pin 9 (IRQ): NORTH tile, gpio (mux=0), pull-up, 8mA, input */
 +	surya_touch_gpio(sst.tlmm_n, 9, 0, 3, 3, false);
 +
-+	/* Pin 8 (Reset): NORTH tile, gpio (mux=0), no pull, 8mA, output high */
++	/* Pin 8 (Reset): NORTH tile, gpio (mux=0), no pull, 8mA, output */
 +	surya_touch_gpio(sst.tlmm_n, 8, 0, 0, 3, true);
-+	surya_touch_gpio_out(sst.tlmm_n, 8, true);
-+	surya_touch_wait(10);
 +	surya_touch_gpio_out(sst.tlmm_n, 8, false);
 +	surya_touch_wait(10);
 +	surya_touch_gpio_out(sst.tlmm_n, 8, true);
-+	surya_touch_wait(200);
++	surya_touch_wait(30);
 +
 +	if (!surya_touch_se_init()) {
 +		goto out;
 +	}
 +
-+	memset(ver, 0, sizeof(ver));
-+	perr = surya_nvt_read(NVT_CHIP_VER_ADDR, ver, sizeof(ver));
-+	printf("SURYA TOUCH: NT36672C probe err=%d ver=%02x%02x%02x%02x irq=%d\n",
-+	    perr, ver[0], ver[1], ver[2], ver[3],
-+	    (int)surya_touch_gpio_in(sst.tlmm_n, 9));
-+	if (perr) {
-+		printf("SURYA TOUCH: probe failed; stopping\n");
-+		goto out;
++	for (attempt = 0; attempt < 10; ++attempt) {
++		memset(trim, 0, sizeof(trim));
++		perr = surya_nvt_check_trim(trim);
++		if (!perr && trim[5] == 0x03u) {
++			break;
++		}
++		surya_touch_wait(10);
 +	}
++
++	printf("SURYA TOUCH: NT36672C probe err=%d trim=%02x %02x %02x %02x %02x %02x irq=%d\n",
++	    perr, trim[0], trim[1], trim[2], trim[3], trim[4], trim[5],
++	    (int)surya_touch_gpio_in(sst.tlmm_n, 9));
 +
 +	printf("SURYA TOUCH: NT36672C ready, 1080x2400, polling every 10 ms\n");
 +	while (!sst.dead) {
