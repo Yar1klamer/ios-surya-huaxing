@@ -9,6 +9,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('kernel', type=Path)
 p.add_argument('adt', type=Path)
 p.add_argument('out', type=Path)
+p.add_argument('--diagnostic', action='store_true', help='tee selected daemon stderr from /dev/null to console')
 a = p.parse_args()
 kernel = a.kernel.read_bytes()
 if b'SURYA: bounded Apple root writes armed' not in kernel:
@@ -16,7 +17,7 @@ if b'SURYA: bounded Apple root writes armed' not in kernel:
 m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
-blob, info = mkpayload.build(str(a.kernel), str(a.adt), surya.APPLE_CMDLINE)
+blob, info = mkpayload.build(str(a.kernel), str(a.adt), surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
 result = surya.validate_payload(blob)
 if result['stage'] != 'apple-root':
     raise SystemExit('expected an explicit Apple-root ADT')

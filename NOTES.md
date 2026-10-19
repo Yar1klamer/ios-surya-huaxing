@@ -9,6 +9,19 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+Latest photo codex-clipboard-5a914b82-2b90-42c1-81f9-3ab107100e92.png:
+continued xpcproxy/bluetoothd/fairplayd.H2 execs, triald AKS selector17 repeated
+with ->0x0. Source SweetKeyStore.cpp confirms selector17 GetDeviceState;
+return0 is kIOReturnSuccess, not itself a failure indication. Do not invent a
+key-store fix without actual error evidence. maintenanced also attempted.
+Prepared a boot-arguments-only diagnostic, same verified kernel/ADT/bounds,
+using existing sweetnull logger for launchd,xpcproxy,bluetoothd,fairplayd.H2,
+triald,backboardd,SpringBoard. No filesystem reflash or job deletion needed.
+24 host tests + repo validation passed. Diagnostic boot image at
+research/apple-root-ready/boot-apple-diagnostics.img; checksum manifest beside
+it. Not yet booted; return phone to Fastboot to test. Full GUI still unconfirmed.
+
+
 OWNER APPROVAL RECEIVED: user replied "yes" to the explicit request to replace
 userdata with the verified Apple filesystem and temporarily boot Apple launchd,
 after disclosure that ColorOS apps/settings/personal files are replaced and no

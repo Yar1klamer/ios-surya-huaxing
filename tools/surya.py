@@ -21,6 +21,8 @@ APPLE_CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam '
                  'ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 '
                  'launchd_unsecure_cache=1 wdt=-1 sweettouch=0 sweetkeys=0 '
                  'sweetusb=0 sweetbattery=0 sweetlog=0')
+APPLE_DIAGNOSTIC_CMDLINE = (APPLE_CMDLINE +
+    ' sweetnull=launchd,xpcproxy,bluetoothd,fairplayd.H2,triald,backboardd,SpringBoard')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 
@@ -139,7 +141,8 @@ def validate_payload(blob):
     # Validate the same contract used by ADT generation, including address limits.
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
-    if cmd != (APPLE_CMDLINE if apple_root else CMDLINE):
+    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE) if apple_root else (CMDLINE,)
+    if cmd not in allowed_cmdlines:
         raise ValueError('command line does not match the SURYA boot profile')
     ranges = []
     table_end = mkpayload.SEG_TABLE + count * 32
