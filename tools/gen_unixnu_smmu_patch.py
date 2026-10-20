@@ -41,6 +41,20 @@ def generate():
  bsd/dev/sweet_spmi.c\t\t\tstandard
  bsd/dev/sweet_usb.c\t\t\tstandard
 '''
+    # Stop only diagnostic SMMU faults before the missing panic-buffer path.
+    for name, kind in (("sleh_synchronous", 1), ("sleh_serror", 2)):
+        signature = f"{name}(arm_context_t *context, uint32_t esr, vm_offset_t far)"
+        lines = ["#if defined(ARM64_BOARD_CONFIG_SURYA)",
+                 "\textern void surya_smmu_exception_capture(unsigned, uint32_t, uint64_t, uint64_t, uint64_t);",
+                 f"\tsurya_smmu_exception_capture({kind}, esr, far,",
+                 "\t    get_saved_state_pc(&context->ss), get_saved_state_lr(&context->ss));",
+                 "#endif"]
+        patch += ("diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c\n"
+                  "--- a/osfmk/arm64/sleh.c\n+++ b/osfmk/arm64/sleh.c\n"
+                  "@@ -1,3 +1,8 @@\n " + signature + "\n {\n" +
+                  "".join("+" + line + "\n" for line in lines) +
+                  (" \tesr_exception_class_t  class   = ESR_EC(esr);\n" if kind == 1 else
+                   " \ttask_vtimer_check(current_thread());\n"))
     return patch
 
 

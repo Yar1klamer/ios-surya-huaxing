@@ -9,6 +9,21 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## SMMU access fault capture (2026-10-20, in progress)
+
+Owner photo91a3f3fc confirms all three DT clock operations return: iface
+before1/after1, DDR AXI before0/after1 (partly occluded), MEMNOC220/221.
+STEP4 clocks-ready appears, then STEP5 read ID0 at0x5040020 never returns.
+No SMMU identity/capability or GPU execution pass. This supersedes the pending
+photo status below. Downstream MiCode surya-q-oss arm-smmu.c probes ID0 at
+base+0x20 after power resources. Secure restore is conditional on static-CB;
+captured DT has no static-CB option, so no guessed SCM call or register alias.
+ARM64 ml_probe_read is explicitly unimplemented in this XNU version.
+Adding diagnostic-only synchronous/SError capture armed around SMMU reads,
+printing ESR/FAR/PC/LR and intended VA/PA before panic logging. This exposes
+exceptions, not a transaction that stalls without an exception. No context
+activation, GPU commands or additional SMMU writes.
+
 ## Full KGSL IOMMU clock dependency correction (2026-10-20)
 
 Commit0f6deeae0017d1d6017c01990b3f66efa8a46e82; CI39487879790 passed.

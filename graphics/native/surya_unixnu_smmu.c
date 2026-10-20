@@ -7,12 +7,46 @@
 #include <sys/systm.h>
 #include <kern/clock.h>
 #include <vm/pmap.h>
+#include <pexpert/pexpert.h>
 #include <vm/vm_kern.h>
 #include "surya_unixnu_smmu.h"
 #include "surya_gpu_dt.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
+
+/* Armed only during diagnostic SMMU MMIO, never during normal GUI boots.
+ * Capture before the ordinary panic logger (no reserved panic region yet).
+ * A transaction that never raises an exception still cannot be timed out here.
+ */
+static volatile uint64_t smmu_probe_va, smmu_probe_pa;
+
+void surya_smmu_exception_capture(unsigned kind, uint32_t esr, uint64_t far,
+    uint64_t pc, uint64_t lr)
+{
+    const uint64_t probe_va = smmu_probe_va, probe_pa = smmu_probe_pa;
+    if (!probe_va) return;
+    smmu_probe_va = 0; /* A reporting fault must not recurse into this hook. */
+    kprintf("\nSURYA SMMU EXCEPTION CAPTURE kind=%u\n", kind);
+    kprintf("ESR=%016llx FAR=%016llx\n", (uint64_t)esr, far);
+    kprintf("PC=%016llx LR=%016llx\n", pc, lr);
+    kprintf("PROBE VA=%016llx PA=%016llx\n", probe_va, probe_pa);
+    kprintf("HALTED: photograph capture; Power + Volume Down returns to Fastboot\n");
+    __asm__ volatile("msr daifset, #15; dsb sy" ::: "memory");
+    for (;;) __asm__ volatile("wfe");
+}
+
+static uint32_t smmu_read32(vm_offset_t base, unsigned off)
+{
+    smmu_probe_pa = SURYA_DT_SMMU_PA + off;
+    smmu_probe_va = base + off;
+    __asm__ volatile("dsb sy" ::: "memory");
+    uint32_t value = *(volatile uint32_t *)(base + off);
+    /* Keep the capture armed through completion of the transaction. */
+    __asm__ volatile("dsb sy" ::: "memory");
+    smmu_probe_va = 0;
+    return value;
+}
 
 static uint32_t read32(vm_offset_t base, unsigned off)
 {
@@ -117,18 +151,24 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
     r->stage = 2;
     vm_offset_t smmu = ml_io_map(SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE);
     if (!smmu) {r->code = 4; return;}
+    ppnum_t mapped = pmap_find_phys(kernel_pmap, (addr64_t)smmu);
+    uint64_t translated = ptoa_64(mapped) + (smmu & PAGE_MASK);
+    printf("SURYA SMMU CPU MAP: VA=%#llx PA=%#llx expected=%#llx\n",
+        (uint64_t)smmu, translated, SURYA_DT_SMMU_PA);
+    delay(20000);
+    if (!mapped || translated != SURYA_DT_SMMU_PA) {r->code = 6; return;}
     printf("SURYA UNIXNU STEP 5: read ID0 at 0x5040020\n");
     delay(20000);
-    r->id0 = read32(smmu, 0x20);
+    r->id0 = smmu_read32(smmu, 0x20);
     printf("SURYA UNIXNU STEP 6: ID0=%#x; read ID1\n", r->id0);
     delay(20000);
-    r->id1 = read32(smmu, 0x24);
+    r->id1 = smmu_read32(smmu, 0x24);
     printf("SURYA UNIXNU STEP 7: ID1=%#x; read ID2\n", r->id1);
     delay(20000);
-    r->id2 = read32(smmu, 0x28);
+    r->id2 = smmu_read32(smmu, 0x28);
     printf("SURYA UNIXNU STEP 8: ID2=%#x; read SCR0\n", r->id2);
     delay(20000);
-    r->scr0 = read32(smmu, 0);
+    r->scr0 = smmu_read32(smmu, 0);
     if (surya_unixnu_cb0(r->id1, SURYA_DT_SMMU_SIZE, &r->cb_offset) ||
         r->cb_offset != SURYA_DT_USER_CB_OFFSET) {
         r->code = 5; return;
@@ -136,13 +176,17 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
     printf("SURYA UNIXNU STEP 9: SCR0=%#x; read CB0 off=%#x\n", r->scr0, r->cb_offset);
     delay(20000);
     r->stage = 3;
-    r->cb_sctlr = read32(smmu, r->cb_offset);
-    r->cb_fsr = read32(smmu, r->cb_offset + 0x58);
-    r->cb_tcr = read32(smmu, r->cb_offset + 0x30);
+    r->cb_sctlr = smmu_read32(smmu, r->cb_offset);
+    r->cb_fsr = smmu_read32(smmu, r->cb_offset + 0x58);
+    r->cb_tcr = smmu_read32(smmu, r->cb_offset + 0x30);
     printf("SURYA UNIXNU STEP 10: SCTLR=%#x FSR=%#x; read TTBR0\n", r->cb_sctlr, r->cb_fsr);
     delay(20000);
-    r->cb_ttbr0 = *(volatile uint64_t *)(smmu + r->cb_offset + 0x20);
-    __asm__ volatile("dmb oshld" ::: "memory");
+    smmu_probe_pa = SURYA_DT_SMMU_PA + r->cb_offset + 0x20;
+    smmu_probe_va = smmu + r->cb_offset + 0x20;
+    __asm__ volatile("dsb sy" ::: "memory");
+    r->cb_ttbr0 = *(volatile uint64_t *)smmu_probe_va;
+    __asm__ volatile("dsb sy" ::: "memory");
+    smmu_probe_va = 0;
     printf("SURYA UNIXNU STEP 11: CB0 read; build inactive tables\n");
     delay(20000);
     r->stage = 4;
