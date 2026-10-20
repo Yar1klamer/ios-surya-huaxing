@@ -9,6 +9,26 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Volatile Tianma firmware loader (2026-10-20)
+
+Owner photo db09d81e: SPI probe still err0 with correct trim; event read err0,
+reset=f1 and fw=73/13. Running firmware check failed. Added0091 for pinned
+Tianma firmware, carried in ADT only when --touch-firmware explicitly supplied.
+Host validates SHA2566084479e391048f029da01df9c8c0ff9fdf47c8bbfcac3b927572eca23592c90;
+kernel validates exact139264 bytes, whole CRC32, version/end marker, fixed SRAM
+region bounds before upload. Only observed chip trim is accepted by0090.
+Loader follows Xiaomi NT36675/hw_crc2 sequence: bootloader reset, fast-read off,
+five SRAM regions, readback every <=64-byte page-bounded block, ILM/DLM CRC banks,
+CRC enable, boot-ready, then reset/version verification. This is volatile
+controller RAM upload, no flash-program commands, no phone partition writes.
+Wrong panel/blob/size or transfer/readback errors stop before boot-ready.
+Report snapshot waits20 seconds now. GUI profile still proceeds to launchd.
+Source-based loader harness passed ASAN/UBSAN for success, bad blob/panel/size,
+SPI failure, readback corruption, exact firmware regions and CRC length setup.
+Pending0087/protocol/fetch-helper files remain untouched/uncommitted.
+Next: CI, package diagnostic with pinned firmware, temporary boot, obtain
+SRAM verify and firmware boot result. Do not infer hardware success from mocks.
+
 ## Novatek event-page correction (2026-10-20)
 
 Owner photo 6609a184 confirms 0089 report: worker starts; SE0 fw=0x101,

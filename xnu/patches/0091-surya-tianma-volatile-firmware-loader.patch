@@ -1,0 +1,196 @@
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -14,6 +14,7 @@
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ /* Mach MIG declaration is not included by BSD's exported thread.h. */
+@@ -1020,7 +1021,13 @@
+ 		if (reset >= 0xa0 && reset <= 0xaf) break;
+ 		surya_touch_wait(10);
+ 	}
+-	if (!err) err = surya_touch_spi_read(0x78, info, sizeof(info));
++	if (!err && reset >= 0xa0 && reset <= 0xaf) {
++		for (attempt = 0; attempt < 50; ++attempt) {
++			err = surya_touch_spi_read(0x78, info, sizeof(info));
++			if (err || (unsigned)info[0] + info[1] == 255u) break;
++			surya_touch_wait(10);
++		}
++	}
+ 	printf("SURYA TOUCH: event=0x22d00 err=%d reset=%02x fw=%02x/%02x\n",
+ 	    err, reset, info[0], info[1]);
+ 	if (err) return err;
+@@ -1029,6 +1036,133 @@
+ 		return EAGAIN;
+ 	}
+ 	return 0;
++}
++
++/* Volatile SRAM loader for the one pinned Tianma image. Register map and
++ * boot sequence: Xiaomi surya-q-oss nt36xxx_spi (NT36675, hw_crc=2).
++ * No flash-program commands. Validate the entire image before device writes. */
++struct surya_nvt_part { uint32_t off, addr, size, crc; };
++static const struct surya_nvt_part surya_nvt_parts[] = {
++	{0x100u, 0x0u, 77696u, 0xb947fe34u},
++	{0x18100u, 0x27140u, 16880u, 0xdfb4d648u},
++	{0x13080u, 0x12f80u, 3017u, 0x313c556cu},
++	{0x13c48u, 0x20000u, 2463u, 0xaf1163b6u},
++	{0x0u, 0x27040u, 256u, 0x1cd69d8bu},
++};
++
++static uint32_t
++surya_nvt_blob_crc(const uint8_t *data, unsigned len)
++{
++	uint32_t crc = 0xffffffffu;
++	for (unsigned i = 0; i < len; ++i) {
++		crc ^= data[i];
++		for (unsigned bit = 0; bit < 8; ++bit)
++			crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
++	}
++	return ~crc;
++}
++
++static bool
++surya_nvt_blob_valid(const uint8_t *data, unsigned len)
++{
++	if (!data || len != 139264u || surya_nvt_blob_crc(data, len) != 0x9f8b9838u)
++		return false;
++	if (data[126976] != 0xc2 || data[126977] != 0x3d ||
++	    memcmp(data + 131069, "NVT", 3) != 0) return false;
++	for (unsigned i = 0; i < sizeof(surya_nvt_parts)/sizeof(surya_nvt_parts[0]); ++i) {
++		const struct surya_nvt_part *p = &surya_nvt_parts[i];
++		if (!p->size || p->off > len || p->size > len - p->off ||
++		    p->addr >= 0x30000u || p->size > 0x30000u - p->addr) return false;
++	}
++	return true;
++}
++
++static int
++surya_nvt_addr(uint32_t addr)
++{
++	uint8_t page[3] = {0xff, (uint8_t)(addr >> 15), (uint8_t)(addr >> 7)};
++	return surya_touch_spi_write(page, sizeof(page));
++}
++
++static int
++surya_nvt_write(uint32_t addr, uint32_t value, unsigned bytes)
++{
++	uint8_t buf[5];
++	int err;
++	if (bytes < 1 || bytes > 4) return EINVAL;
++	err = surya_nvt_addr(addr);
++	if (err) return err;
++	buf[0] = (uint8_t)(addr & 0x7fu);
++	for (unsigned i = 0; i < bytes; ++i) buf[i + 1] = (uint8_t)(value >> (i * 8));
++	return surya_touch_spi_write(buf, bytes + 1);
++}
++
++static int
++surya_nvt_crc_bank(const struct surya_nvt_part *p, uint32_t dest,
++    uint32_t length, uint32_t golden)
++{
++	int err = surya_nvt_write(dest, p->addr, 3);
++	if (!err) err = surya_nvt_write(length, p->size - 1, 3); /* hw_crc=2 */
++	if (!err) err = surya_nvt_write(golden, p->crc, 4);
++	return err;
++}
++
++static int
++surya_nvt_load_firmware(void)
++{
++	DTEntry chosen;
++	const uint8_t *fw = NULL;
++	const char *panel = NULL;
++	unsigned len = 0, panel_len = 0;
++	uint8_t tx[65], verify[64], crc_enable = 0;
++	int err;
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	    SecureDTGetProperty(chosen, "surya-touch-panel", (void const **)&panel,
++	    &panel_len) != kSuccess || panel_len != 7 || memcmp(panel, "tianma", 7) ||
++	    SecureDTGetProperty(chosen, "surya-touch-firmware", (void const **)&fw,
++	    &len) != kSuccess || !surya_nvt_blob_valid(fw, len)) {
++		printf("SURYA TOUCH: pinned Tianma firmware missing or rejected; no upload\n");
++		return EINVAL;
++	}
++	printf("SURYA TOUCH: loading verified Tianma image into volatile SRAM\n");
++	err = surya_nvt_write(0x3f0fe, 0x69, 1); /* bootloader reset */
++	if (err) return err;
++	surya_touch_wait(5);
++	err = surya_nvt_write(0x3f310, 0, 1); /* disable fast-read */
++	if (err) return err;
++	for (unsigned i = 0; i < sizeof(surya_nvt_parts)/sizeof(surya_nvt_parts[0]); ++i) {
++		const struct surya_nvt_part *p = &surya_nvt_parts[i];
++		for (unsigned off = 0; off < p->size;) {
++			uint32_t addr = p->addr + off;
++			unsigned n = (unsigned)MIN(64u, p->size - off);
++			n = (unsigned)MIN(n, 128u - (addr & 0x7fu));
++			err = surya_nvt_addr(addr);
++			if (err) return err;
++			tx[0] = (uint8_t)(addr & 0x7fu);
++			memcpy(tx + 1, fw + p->off + off, n);
++			err = surya_touch_spi_write(tx, n + 1);
++			if (!err) err = surya_touch_spi_read(tx[0], verify, n);
++			if (err || memcmp(verify, fw + p->off + off, n)) {
++				printf("SURYA TOUCH: SRAM verify failed part=%u offset=%#x err=%d\n", i, off, err);
++				return err ? err : EIO;
++			}
++			off += n;
++		}
++		printf("SURYA TOUCH: SRAM part=%u verified bytes=%u\n", i, p->size);
++	}
++	err = surya_nvt_crc_bank(&surya_nvt_parts[0], 0x3f128, 0x3f118, 0x3f100);
++	if (!err) err = surya_nvt_crc_bank(&surya_nvt_parts[1], 0x3f12c, 0x3f130, 0x3f104);
++	if (!err) err = surya_nvt_addr(0x3f30e);
++	if (!err) err = surya_touch_spi_read(0x0e, &crc_enable, 1);
++	if (!err) err = surya_nvt_write(0x3f30e, crc_enable | 0x80u, 1);
++	if (!err) err = surya_nvt_write(0x22d60, 0, 1);
++	if (!err) err = surya_nvt_write(0x22d50, 0xae, 1);
++	if (!err) err = surya_nvt_write(0x3f10d, 1, 1);
++	if (err) return err;
++	surya_touch_wait(5);
++	err = surya_nvt_firmware_state();
++	printf("SURYA TOUCH: firmware boot result=%d\n", err);
++	return err;
+ }
+ 
+ static void
+@@ -1177,7 +1311,13 @@
+ 		printf("SURYA TOUCH: unsupported trim; no event memory selected\n");
+ 		goto out;
+ 	}
+-	if (surya_nvt_firmware_state()) goto out;
++	if (surya_nvt_firmware_state()) {
++		int load_err = surya_nvt_load_firmware();
++		if (load_err) {
++			printf("SURYA TOUCH: firmware loader stopped err=%d\n", load_err);
++			goto out;
++		}
++	}
+ 	printf("SURYA TOUCH: firmware ready, 1080x2400, polling every 10 ms\n");
+ 	while (!sst.dead) {
+ 		irq_low = !surya_touch_gpio_in(sst.tlmm_n, 9);
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -824,7 +824,7 @@
+ 	(void)PE_parse_boot_argn("suryatouchreport", &enabled, sizeof(enabled));
+ 	if (enabled != 1) return;
+ 	/* Give the existing delayed touch worker time to probe. */
+-	(void)tsleep(&sweet_log_chan, PZERO, "touchreport", hz * 8);
++	(void)tsleep(&sweet_log_chan, PZERO, "touchreport", hz * 20);
+ 	end = sweet_log_position();
+ 	while (pos < end) {
+ 		uint32_t n = sweet_log_copy(&pos, chunk,
+@@ -852,7 +852,7 @@
+ 		disableConsoleOutput = 0;
+ 		printf("\nSURYA TOUCH BOOT REPORT - launchd intentionally paused\n");
+ 		printf("%s", used ? report : "No SURYA TOUCH lines captured; startup not established.\n");
+-		printf("Report is an 8-second log snapshot, not proof touch works.\n");
++		printf("Report is a 20-second log snapshot, not proof touch works.\n");
+ 		printf("Photograph this report. Power + Volume Down returns to Fastboot.\n");
+ 		(void)tsleep(&sweet_log_chan, PZERO, "touchreport", hz * 5);
+ 	}

@@ -152,6 +152,13 @@ def validate_payload(blob):
     allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE) if apple_root else (CMDLINE,)
     if cmd not in allowed_cmdlines:
         raise ValueError('command line does not match the SURYA boot profile')
+    touch_chosen = child(root, 'chosen')
+    firmware = touch_chosen.prop('surya-touch-firmware')
+    if firmware is not None:
+        import surya_touch_firmware
+        if not apple_root or 'sweettouch=1' not in cmd or touch_chosen.prop('surya-touch-panel') != b'tianma\0':
+            raise ValueError('touch firmware requires the explicit Tianma root profile')
+        surya_touch_firmware.validate(firmware)
     ranges = []
     table_end = mkpayload.SEG_TABLE + count * 32
     for i in range(count):
