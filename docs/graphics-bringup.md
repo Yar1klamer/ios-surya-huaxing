@@ -180,3 +180,13 @@ all GCC reads/writes and labels it `GCC UNPROBED`. The existing verified GMU/GX
 power sequence precedes a separate read-only SMMU probe. It does not assert
 MEMNOC clock readiness; there are no new hardware writes or active contexts.
 The prior stall remains unexplained, and SMMU reads still require observation.
+
+### Captured DT is the kernel resource source
+
+`tools/gen_surya_gpu_dt.py CAPTURED_DT --out graphics/native/surya_gpu_dt.h`
+resolves resources using phandles, register names, bus ranges and parent cell
+widths. The sanitized generated header is compiled into the diagnostic/power
+path; raw captures remain ignored. SMMU context geometry must match both real
+ID1 and the DT's GPU-relative context offset. Clock ID43 is a provider binding,
+not a register offset. This does not fix the observed blocked GCC read, which
+remains omitted. No clock readiness or GPU execution is inferred from DT data.

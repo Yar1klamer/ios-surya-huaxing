@@ -8,6 +8,7 @@
 #include <pexpert/pexpert.h>
 #include <pexpert/device_tree.h>
 #include "surya_gpu_pt.h"
+#include "surya_gpu_dt.h"
 #include "surya_gmu_protocol.h"
 #include "surya_unixnu_smmu.h"
 
@@ -16,20 +17,20 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern int hz;
 void surya_gpu_pt_diagnostic(void);
 
-#define SURYA_GPU_PA       0x05000000u
-#define SURYA_GPU_SIZE     0x2000u
+#define SURYA_GPU_PA       SURYA_DT_GPU_PA
+#define SURYA_GPU_SIZE     SURYA_DT_GPU_SIZE
 
-#define SURYA_GPUCC_PA     0x05090000u
-#define SURYA_GPUCC_SIZE   0x3000u
+#define SURYA_GPUCC_PA     SURYA_DT_GPUCC_PA
+#define SURYA_GPUCC_SIZE   SURYA_DT_GPUCC_SIZE
 
-#define SURYA_GMU_PA       0x0506a000u
-#define SURYA_GMU_SIZE     0x31000u
+#define SURYA_GMU_PA       SURYA_DT_GMU_PA
+#define SURYA_GMU_SIZE     SURYA_DT_GMU_SIZE
 
-#define SURYA_PDC_CFG_PA   0x0b290000u
-#define SURYA_PDC_CFG_SIZE 0x10000u
+#define SURYA_PDC_CFG_PA   SURYA_DT_PDC_CFG_PA
+#define SURYA_PDC_CFG_SIZE SURYA_DT_PDC_CFG_SIZE
 
-#define SURYA_PDC_SEQ_PA   0x0b490000u
-#define SURYA_PDC_SEQ_SIZE 0x10000u
+#define SURYA_PDC_SEQ_PA   SURYA_DT_PDC_SEQ_PA
+#define SURYA_PDC_SEQ_SIZE SURYA_DT_PDC_SEQ_SIZE
 
 static inline uint32_t
 sgpu_rd(vm_offset_t base, uint32_t off)
@@ -205,7 +206,8 @@ surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
     sgpu_wr(gmu, 0x140B4, 0x4052u); /* A6XX_GMU_CM3_CFG */
 
     /* Pass chipid for A618: Core 6, Major 1, Minor 8, Patch 0 -> 0x06018000 */
-    sgpu_wr(gmu, 0x14608, 0x06018000u); /* A6XX_GMU_HFI_SFR_ADDR */
+    sgpu_wr(gmu, 0x14608, (uint32_t)((SURYA_DT_CHIP_ID & 0xffff0000u) |
+        (((SURYA_DT_CHIP_ID >> 8) & 0xffu) << 12) | ((SURYA_DT_CHIP_ID & 0xffu) << 8))); /* A6XX_GMU_HFI_SFR_ADDR */
 
     /* Configure bus, caches, power */
     sgpu_wr(gmu, 0x1303C, 1u);         /* A6XX_GMU_SYS_BUS_CONFIG */

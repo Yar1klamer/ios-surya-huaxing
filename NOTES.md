@@ -9,6 +9,25 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Device-tree-driven GPU resource integration (2026-10-20)
+
+Owner steered: use the device tree. Added tools/gen_surya_gpu_dt.py consuming
+captured research/live-surya-android/device-tree through existing typed parser.
+Generates sanitized graphics/native/surya_gpu_dt.h, property-evidence hash,
+no identifiers/raw dumps. Resolves GPU/GMU/GPUCC/PDC/SMMU/GCC reg ranges, actual
+GCC compatible, MEMNOC clock provider/ID43, userSID0/secureSID2 and user CB offset
+from GPU-relative qcom,gpu-offset0x48000 -> SMMU-relative0x8000. Verifies SoC
+ranges identity mapping covers every window; rejects foreign provider/routes,
+truncation/out-of-window context and unsupported translation. Kernel power path
+now consumes generated GPU/GMU/GPUCC/PDC addresses/sizes/chipid. SMMU probe uses
+DT base/size and requires hardware-derived CB offset equal DT offset. Prints
+DT facts. No GCC access is reintroduced. Register field offsets still come from
+SoC driver definitions because DT clock IDs are not register offsets.
+Four new synthetic generator tests; patch/source parity includes generated header.
+Earlier5251de8/CI39483256510 passed but was NOT packaged/booted before this steering.
+Owner ready authorization remains current; build/boot DT-integrated image next.
+
+
 ## UniXNU component integration (2026-10-20)
 
 Owner photo098a889a confirms STEP0 and POWER RESULT code0/OOB1/GX1,

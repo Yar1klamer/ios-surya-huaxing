@@ -9,6 +9,7 @@
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>
 #include "surya_unixnu_smmu.h"
+#include "surya_gpu_dt.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
@@ -79,8 +80,13 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
      * it does not assert MEMNOC clock readiness or authorize activation. */
     printf("SURYA UNIXNU STEP 4: GCC UNPROBED; read-only SMMU ID probe\n");
     delay(20000);
+    printf("SURYA DT: SMMU=%#llx bytes=%#llx userSID=%llu secureSID=%llu CB=%#llx\n",
+        SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE, SURYA_DT_USER_SID,
+        SURYA_DT_SECURE_SID, SURYA_DT_USER_CB_OFFSET);
+    printf("SURYA DT: GCC=%#llx MEMNOC clock ID=%llu (not accessed)\n",
+        SURYA_DT_GCC_PA, SURYA_DT_MEMNOC_CLOCK_ID);
     r->stage = 2;
-    vm_offset_t smmu = ml_io_map(0x05040000, 0x10000);
+    vm_offset_t smmu = ml_io_map(SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE);
     if (!smmu) {r->code = 4; return;}
     printf("SURYA UNIXNU STEP 5: read ID0 at 0x5040020\n");
     delay(20000);
@@ -94,7 +100,8 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
     printf("SURYA UNIXNU STEP 8: ID2=%#x; read SCR0\n", r->id2);
     delay(20000);
     r->scr0 = read32(smmu, 0);
-    if (surya_unixnu_cb0(r->id1, 0x10000, &r->cb_offset)) {
+    if (surya_unixnu_cb0(r->id1, SURYA_DT_SMMU_SIZE, &r->cb_offset) ||
+        r->cb_offset != SURYA_DT_USER_CB_OFFSET) {
         r->code = 5; return;
     }
     printf("SURYA UNIXNU STEP 9: SCR0=%#x; read CB0 off=%#x\n", r->scr0, r->cb_offset);

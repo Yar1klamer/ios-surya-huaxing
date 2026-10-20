@@ -130,6 +130,37 @@ index 0000000..14e2e11
 +    return SGPT_OK;
 +}
 +#endif
+diff --git a/bsd/dev/surya_gpu_dt.h b/bsd/dev/surya_gpu_dt.h
+new file mode 100644
+index 0000000..3b3c225
+--- /dev/null
++++ b/bsd/dev/surya_gpu_dt.h
+@@ -0,0 +1,25 @@
++/* Generated from captured SURYA DT. No device identifiers or raw dumps. */
++/* Property-evidence SHA256: ec1124ca06c4aba1e09843f5407f39dc73a6c418b093e5143a5adf44622c7a39 */
++#ifndef SURYA_GPU_DT_H
++#define SURYA_GPU_DT_H
++#include <stdint.h>
++#define SURYA_DT_CHIP_ID UINT64_C(0x6010800)
++#define SURYA_DT_GCC_PA UINT64_C(0x100000)
++#define SURYA_DT_GCC_SIZE UINT64_C(0x1f0000)
++#define SURYA_DT_GMU_PA UINT64_C(0x506a000)
++#define SURYA_DT_GMU_SIZE UINT64_C(0x31000)
++#define SURYA_DT_GPUCC_PA UINT64_C(0x5090000)
++#define SURYA_DT_GPUCC_SIZE UINT64_C(0x9000)
++#define SURYA_DT_GPU_PA UINT64_C(0x5000000)
++#define SURYA_DT_GPU_SIZE UINT64_C(0x40000)
++#define SURYA_DT_MEMNOC_CLOCK_ID UINT64_C(0x2b)
++#define SURYA_DT_PDC_CFG_PA UINT64_C(0xb290000)
++#define SURYA_DT_PDC_CFG_SIZE UINT64_C(0x10000)
++#define SURYA_DT_PDC_SEQ_PA UINT64_C(0xb490000)
++#define SURYA_DT_PDC_SEQ_SIZE UINT64_C(0x10000)
++#define SURYA_DT_SECURE_SID UINT64_C(0x2)
++#define SURYA_DT_SMMU_PA UINT64_C(0x5040000)
++#define SURYA_DT_SMMU_SIZE UINT64_C(0x10000)
++#define SURYA_DT_USER_CB_OFFSET UINT64_C(0x8000)
++#define SURYA_DT_USER_SID UINT64_C(0x0)
++#endif
 diff --git a/bsd/dev/surya_gmu_protocol.h b/bsd/dev/surya_gmu_protocol.h
 new file mode 100644
 index 0000000..e0f8ac8
@@ -163,10 +194,10 @@ index 0000000..e0f8ac8
 +#endif
 diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
 new file mode 100644
-index 0000000..65a4484
+index 0000000..cee1ddd
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.c
-@@ -0,0 +1,451 @@
+@@ -0,0 +1,453 @@
 +/* Offline ARM LPAE table test & Adreno GPU power/clock bringup diagnostic. */
 +#if defined(ARM64_BOARD_CONFIG_SURYA)
 +#include <sys/param.h>
@@ -177,6 +208,7 @@ index 0000000..65a4484
 +#include <pexpert/pexpert.h>
 +#include <pexpert/device_tree.h>
 +#include "surya_gpu_pt.h"
++#include "surya_gpu_dt.h"
 +#include "surya_gmu_protocol.h"
 +#include "surya_unixnu_smmu.h"
 +
@@ -185,20 +217,20 @@ index 0000000..65a4484
 +extern int hz;
 +void surya_gpu_pt_diagnostic(void);
 +
-+#define SURYA_GPU_PA       0x05000000u
-+#define SURYA_GPU_SIZE     0x2000u
++#define SURYA_GPU_PA       SURYA_DT_GPU_PA
++#define SURYA_GPU_SIZE     SURYA_DT_GPU_SIZE
 +
-+#define SURYA_GPUCC_PA     0x05090000u
-+#define SURYA_GPUCC_SIZE   0x3000u
++#define SURYA_GPUCC_PA     SURYA_DT_GPUCC_PA
++#define SURYA_GPUCC_SIZE   SURYA_DT_GPUCC_SIZE
 +
-+#define SURYA_GMU_PA       0x0506a000u
-+#define SURYA_GMU_SIZE     0x31000u
++#define SURYA_GMU_PA       SURYA_DT_GMU_PA
++#define SURYA_GMU_SIZE     SURYA_DT_GMU_SIZE
 +
-+#define SURYA_PDC_CFG_PA   0x0b290000u
-+#define SURYA_PDC_CFG_SIZE 0x10000u
++#define SURYA_PDC_CFG_PA   SURYA_DT_PDC_CFG_PA
++#define SURYA_PDC_CFG_SIZE SURYA_DT_PDC_CFG_SIZE
 +
-+#define SURYA_PDC_SEQ_PA   0x0b490000u
-+#define SURYA_PDC_SEQ_SIZE 0x10000u
++#define SURYA_PDC_SEQ_PA   SURYA_DT_PDC_SEQ_PA
++#define SURYA_PDC_SEQ_SIZE SURYA_DT_PDC_SEQ_SIZE
 +
 +static inline uint32_t
 +sgpu_rd(vm_offset_t base, uint32_t off)
@@ -374,7 +406,8 @@ index 0000000..65a4484
 +    sgpu_wr(gmu, 0x140B4, 0x4052u); /* A6XX_GMU_CM3_CFG */
 +
 +    /* Pass chipid for A618: Core 6, Major 1, Minor 8, Patch 0 -> 0x06018000 */
-+    sgpu_wr(gmu, 0x14608, 0x06018000u); /* A6XX_GMU_HFI_SFR_ADDR */
++    sgpu_wr(gmu, 0x14608, (uint32_t)((SURYA_DT_CHIP_ID & 0xffff0000u) |
++        (((SURYA_DT_CHIP_ID >> 8) & 0xffu) << 12) | ((SURYA_DT_CHIP_ID & 0xffu) << 8))); /* A6XX_GMU_HFI_SFR_ADDR */
 +
 +    /* Configure bus, caches, power */
 +    sgpu_wr(gmu, 0x1303C, 1u);         /* A6XX_GMU_SYS_BUS_CONFIG */

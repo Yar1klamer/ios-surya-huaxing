@@ -56,7 +56,7 @@ void corrupt(unsigned i,uint64_t value) {pool[i]=value;}
 
     def test_kernel_patch_is_exact_canonical_source(self):
         patch = (ROOT / 'xnu/patches/0092-surya-private-gpu-page-tables.patch').read_text()
-        for name in ('surya_gpu_pt.h', 'surya_gpu_pt.c', 'surya_gmu_protocol.h'):
+        for name in ('surya_gpu_pt.h', 'surya_gpu_pt.c', 'surya_gmu_protocol.h', 'surya_gpu_dt.h'):
             body = patch.split('+++ b/bsd/dev/' + name + '\n', 1)[1].split('diff --git ', 1)[0]
             embedded = '\n'.join(line[1:] for line in body.splitlines() if line.startswith('+')) + '\n'
             self.assertEqual(embedded, (ROOT / 'graphics/native' / name).read_text())
