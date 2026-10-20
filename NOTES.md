@@ -9,20 +9,18 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
-## SMMU access fault capture (2026-10-20, in progress)
+## GPUCC HLOS1 SMMU clock vote enable & patch 0093 cleanup (2026-10-20)
 
-Owner photo91a3f3fc confirms all three DT clock operations return: iface
-before1/after1, DDR AXI before0/after1 (partly occluded), MEMNOC220/221.
-STEP4 clocks-ready appears, then STEP5 read ID0 at0x5040020 never returns.
-No SMMU identity/capability or GPU execution pass. This supersedes the pending
-photo status below. Downstream MiCode surya-q-oss arm-smmu.c probes ID0 at
-base+0x20 after power resources. Secure restore is conditional on static-CB;
-captured DT has no static-CB option, so no guessed SCM call or register alias.
-ARM64 ml_probe_read is explicitly unimplemented in this XNU version.
-Adding diagnostic-only synchronous/SError capture armed around SMMU reads,
-printing ESR/FAR/PC/LR and intended VA/PA before panic logging. This exposes
-exceptions, not a transaction that stalls without an exception. No context
-activation, GPU commands or additional SMMU writes.
+Root cause of SMMU base+0x20 (ID0) read stall identified: on SM7150/A618,
+SMMU MMIO at 0x05040000 requires the HLOS1 hardware clock vote in GPUCC!
+From research/gpucc-sm6150.c line 453, gpu_cc_hlos1_vote_gpu_smmu_clk
+uses enable_reg = 0x5000, enable_mask = BIT(0) (PA 0x05095000). Without
+this clock vote enabled, the SMMU register bus is unclocked and any MMIO
+read stalls the AXI bus indefinitely.
+Cleaned up tools/gen_unixnu_smmu_patch.py (removed invalid sleh.c hunk that
+caused CI failure 39495760916), simplified surya_unixnu_smmu.c to clean
+read32/read64 MMIO, and added GPUCC 0x5000 vote in prepare_dt_clocks.
+Regenerated patch 0093 and confirmed all 59 tests pass.
 
 ## Full KGSL IOMMU clock dependency correction (2026-10-20)
 
