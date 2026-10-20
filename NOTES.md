@@ -9,6 +9,20 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Verified GPU page-table diagnostic boot (2026-10-20)
+
+Fixed patch0092 git-apply headers and enforced pure LF line endings (tools/gen_gpu_pt_patch.py).
+Committed 4fd292b and pushed to poco/main. GitHub Actions run 39455580109 passed.
+Verified kernel 2c390a13003e1cf6796a6a9a7888fceb0f34a906fc7a0db2c07d0b8a9cb9741b includes
+both Tianma touch loader and SURYA GPU PAGE TABLE DIAGNOSTIC.
+Packaged research/apple-root-ready/apple-gpu-pt-payload.bin (16730176 bytes) with pinned
+Tianma firmware, and built research/apple-root-ready/boot-apple-gpu-pt.img (20197376 bytes,
+SHA256 724593160914f772166b9ccd47f0413b6973fc4d171bfd819a41ae27971c7820).
+Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.495s, Booting OKAY 5.093s).
+The diagnostic un-mutes console, verifies 16 KiB private tables and 16,384 translations in XNU RAM,
+and intentionally pauses before launchd so userdata is preserved.
+Power + Volume Down returns to Fastboot.
+
 ## Native allocation / offline GPU tables (2026-10-20)
 
 Owner requested continuing Metal work. Added graphics/native/surya_gpu_pt.h:
