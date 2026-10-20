@@ -1,4 +1,6 @@
 diff --git a/bsd/dev/surya_gpu_pt.h b/bsd/dev/surya_gpu_pt.h
+new file mode 100644
+index 0000000..14e2e11
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.h
 @@ -0,0 +1,126 @@
@@ -129,6 +131,8 @@ diff --git a/bsd/dev/surya_gpu_pt.h b/bsd/dev/surya_gpu_pt.h
 +}
 +#endif
 diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+new file mode 100644
+index 0000000..bd23aa2
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.c
 @@ -0,0 +1,77 @@

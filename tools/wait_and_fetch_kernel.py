@@ -10,7 +10,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-RUN_ID = 39333899470
+RUN_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 39337488012
 REPO = "arbuxiktech/ios-surya"
 
 def get_token():
