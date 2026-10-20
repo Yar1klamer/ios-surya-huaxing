@@ -9,6 +9,27 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Full KGSL IOMMU clock dependency correction (2026-10-20)
+
+Owner photo01080287 confirms OOB/GX pass and DT resource output, then stops
+STEP5 first SMMU ID0 read. No SMMU identity/capability/translation pass.
+Audit found our integration used generic arm,smmu node's one-clock list;
+actual KGSL backend walks qcom,kgsl-iommu clock-names in DT order:
+iface_clk GCC_GPU_CFG_AHB_CLK40, mem_clk GCC_DDRSS_GPU_AXI_CLK27,
+mem_iface_clk GCC_GPU_MEMNOC_GFX_CLK43. Previously first two were omitted.
+Added surya_gpu_clocks.py resolver: numeric IDs -> matching gcc-sdmmagpie.h
+symbols -> driver's clk_branch -> enable/halt register and mask. Refuse
+unknown/order/provider/split-register cases. DT generator now optionally
+accepts source inputs, CLI requires both --clock-bindings/--clock-driver;
+production header contains actual plan40/27/43 at offsets71004/4452c/7100c.
+Native bridge prepares all3 in DT order before any SMMU read. Each read/write
+checkpoint visible; preserve branch bits, bound halt polling and require enable
+readback. SMMU registers still read-only; no context activation/submission.
+59 host tests/repo validation passed. Actual clock accesses remain UNVERIFIED;
+this corrects a concrete missing prerequisite, not proof of a hardware fix.
+Owner ready for temporary test once CI passes. Preserve prior image references.
+
+
 ## Device-tree-driven GPU resource integration (2026-10-20)
 
 Commit53cd81d4d62f3a09d0f92d01446f7caabe1140c3; CI39485093735 passed.

@@ -7,7 +7,7 @@ struct surya_unixnu_smmu_report {
     uint32_t memnoc_before, memnoc_after, id0, id1, id2, scr0;
     uint32_t cb_sctlr, cb_fsr, cb_tcr, cb_offset;
     uint64_t cb_ttbr0;
-    unsigned table_pages, leaves;
+    unsigned table_pages, leaves, clocks_ready;
     int stage, code;
 };
 

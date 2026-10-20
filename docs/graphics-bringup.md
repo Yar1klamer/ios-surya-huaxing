@@ -190,3 +190,16 @@ path; raw captures remain ignored. SMMU context geometry must match both real
 ID1 and the DT's GPU-relative context offset. Clock ID43 is a provider binding,
 not a register offset. This does not fix the observed blocked GCC read, which
 remains omitted. No clock readiness or GPU execution is inferred from DT data.
+
+### KGSL IOMMU clock plan
+
+The KGSL IOMMU node, rather than the generic ARM SMMU node, supplies the
+backend's three-clock sequence: iface_clk40, mem_clk27, mem_iface_clk43.
+The generator requires `--clock-bindings qcom,gcc-sdmmagpie.h` and
+`--clock-driver gcc-sdmmagpie.c`; it resolves each ID through the symbol and
+clk_branch definition, validates register bounds and emits the compiled plan.
+The diagnostic now prepares all three before SMMU reads, with visible per-clock
+checkpoints, preserved branch bits and bounded enable/halt readback. Earlier
+notes describing GCC UNPROBED belong to superseded diagnostic images. The
+previous first-SMMU-read stall does not establish the cause; the missing two
+clock dependencies are a source-confirmed omission corrected for the next test.

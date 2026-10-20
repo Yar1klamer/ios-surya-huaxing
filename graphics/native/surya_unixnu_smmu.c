@@ -1,6 +1,6 @@
 /* SURYA bridge to pinned UniXNU ArmSmmu4K, before live context attachment.
- * All hardware accesses here are read-only. The GCC probe is disabled after
- * an observed access stall. TTBR/SCTLR/streams/TLBs are never written.
+ * DT-ordered KGSL clocks use branch definitions from the matching driver.
+ * TTBR/SCTLR/streams/TLBs are never written; SMMU registers are read-only.
  */
 #if defined(ARM64_BOARD_CONFIG_SURYA)
 #include <sys/param.h>
@@ -70,20 +70,49 @@ static int private_tables(struct surya_unixnu_smmu_report *r)
     return ArmSmmu4KEncodeContext(&context, &image);
 }
 
+static int prepare_dt_clocks(struct surya_unixnu_smmu_report *r)
+{
+    const uint32_t ids[] = {SURYA_DT_IOMMU_CLK0_ID, SURYA_DT_IOMMU_CLK1_ID, SURYA_DT_IOMMU_CLK2_ID};
+    const uint32_t offsets[] = {SURYA_DT_IOMMU_CLK0_OFFSET, SURYA_DT_IOMMU_CLK1_OFFSET, SURYA_DT_IOMMU_CLK2_OFFSET};
+    const uint32_t masks[] = {SURYA_DT_IOMMU_CLK0_MASK, SURYA_DT_IOMMU_CLK1_MASK, SURYA_DT_IOMMU_CLK2_MASK};
+    printf("SURYA DT CLOCKS: map captured GCC=%#llx size=%#llx\n", SURYA_DT_GCC_PA, SURYA_DT_GCC_SIZE);
+    delay(20000);
+    vm_offset_t gcc = ml_io_map(SURYA_DT_GCC_PA, SURYA_DT_GCC_SIZE);
+    if (!gcc) return 10;
+    for (unsigned i = 0; i < 3; ++i) {
+        printf("SURYA DT CLOCK %u: ID=%u read branch=%#llx\n", i, ids[i], SURYA_DT_GCC_PA + offsets[i]);
+        delay(20000);
+        r->memnoc_before = read32(gcc, offsets[i]);
+        if (r->memnoc_before == UINT32_MAX || r->memnoc_before == 0xdeafbead) return 11 + i;
+        __asm__ volatile("dmb oshst" ::: "memory");
+        *(volatile uint32_t *)(gcc + offsets[i]) = r->memnoc_before | masks[i];
+        __asm__ volatile("dsb osh" ::: "memory");
+        for (unsigned poll = 0; poll < 5000; ++poll) {
+            r->memnoc_after = read32(gcc, offsets[i]);
+            if (!(r->memnoc_after & (1u << 31))) break;
+            delay(1);
+        }
+        printf("SURYA DT CLOCK %u: before=%#x after=%#x\n", i, r->memnoc_before, r->memnoc_after);
+        delay(20000);
+        if ((r->memnoc_after & (1u << 31)) || !(r->memnoc_after & masks[i])) return 21 + i;
+        r->clocks_ready |= 1u << i;
+    }
+    return 0;
+}
+
 void
 surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
 {
     *r = (struct surya_unixnu_smmu_report){0};
-    /* The owner-observed STEP2 stops at the first GCC0x17100c read.
-     * Do not repeat it or guess an alternate clock register. The established
-     * GMU/GX power path is retained. This is a separate read-only SMMU probe;
-     * it does not assert MEMNOC clock readiness or authorize activation. */
-    printf("SURYA UNIXNU STEP 4: GCC UNPROBED; read-only SMMU ID probe\n");
+    r->stage = 1;
+    r->code = prepare_dt_clocks(r);
+    if (r->code) return;
+    printf("SURYA UNIXNU STEP 4: KGSL DT clocks ready; read-only SMMU probe\n");
     delay(20000);
     printf("SURYA DT: SMMU=%#llx bytes=%#llx userSID=%llu secureSID=%llu CB=%#llx\n",
         SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE, SURYA_DT_USER_SID,
         SURYA_DT_SECURE_SID, SURYA_DT_USER_CB_OFFSET);
-    printf("SURYA DT: GCC=%#llx MEMNOC clock ID=%llu (not accessed)\n",
+    printf("SURYA DT: GCC=%#llx MEMNOC clock ID=%llu (clock plan)\n",
         SURYA_DT_GCC_PA, SURYA_DT_MEMNOC_CLOCK_ID);
     r->stage = 2;
     vm_offset_t smmu = ml_io_map(SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE);

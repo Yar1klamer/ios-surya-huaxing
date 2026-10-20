@@ -4,10 +4,11 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from surya_gpu_clocks import resolve
 from surya_gpu_inventory import Tree, cells, strings, inventory
 
 
-def generate(root):
+def generate(root, bindings=None, driver=None):
     report = inventory(root)
     tree = Tree(root)
     soc = tree.root / 'soc'
@@ -60,7 +61,22 @@ def generate(root):
     for key, value in facts.items():
         if key.endswith('_PA') and not any(base <= value and value + facts[key[:-3]+'_SIZE'] <= base + size for base, size in translated):
             raise ValueError('register window outside translated SoC bus')
+    if (bindings is None) != (driver is None):
+        raise ValueError('both GCC binding header and driver required')
+    if bindings is not None:
+        clocks = report['nodes']['kgsl_iommu']['clocks']
+        if any(c['provider'] != tree.path(gcc) for c in clocks):
+            raise ValueError('KGSL clocks must use captured GCC provider')
+        plan = resolve(clocks, bindings, driver)
+        for i, clock in enumerate(plan):
+            if clock['offset'] + 4 > facts['GCC_SIZE']:
+                raise ValueError('branch outside captured GCC range')
+            for key in ('id', 'offset', 'mask'):
+                facts[f'IOMMU_CLK{i}_{key.upper()}'] = clock[key]
     evidence = dict(report['property_hashes'], **tree.evidence)
+    if bindings is not None:
+        evidence['matching-gcc-binding'] = hashlib.sha256(bindings.encode()).hexdigest()
+        evidence['matching-gcc-driver'] = hashlib.sha256(driver.encode()).hexdigest()
     digest = hashlib.sha256(json.dumps(evidence, sort_keys=True).encode()).hexdigest()
     lines = ['/* Generated from captured SURYA DT. No device identifiers or raw dumps. */',
              '/* Property-evidence SHA256: ' + digest + ' */',
@@ -74,6 +90,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('device_tree', type=Path)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--clock-bindings', type=Path, required=True)
+    parser.add_argument('--clock-driver', type=Path, required=True)
     args = parser.parse_args()
-    args.out.write_bytes(generate(args.device_tree).encode())
+    args.out.write_bytes(generate(args.device_tree, args.clock_bindings.read_text(), args.clock_driver.read_text()).encode())
     print(args.out)

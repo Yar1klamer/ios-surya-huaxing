@@ -132,12 +132,12 @@ index 0000000..14e2e11
 +#endif
 diff --git a/bsd/dev/surya_gpu_dt.h b/bsd/dev/surya_gpu_dt.h
 new file mode 100644
-index 0000000..3b3c225
+index 0000000..a9d120b
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_dt.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,34 @@
 +/* Generated from captured SURYA DT. No device identifiers or raw dumps. */
-+/* Property-evidence SHA256: ec1124ca06c4aba1e09843f5407f39dc73a6c418b093e5143a5adf44622c7a39 */
++/* Property-evidence SHA256: dc7936db9d9ed0136f638a7bd742b39df8e07704d0b0e57c66e3a77a5ad80e45 */
 +#ifndef SURYA_GPU_DT_H
 +#define SURYA_GPU_DT_H
 +#include <stdint.h>
@@ -150,6 +150,15 @@ index 0000000..3b3c225
 +#define SURYA_DT_GPUCC_SIZE UINT64_C(0x9000)
 +#define SURYA_DT_GPU_PA UINT64_C(0x5000000)
 +#define SURYA_DT_GPU_SIZE UINT64_C(0x40000)
++#define SURYA_DT_IOMMU_CLK0_ID UINT64_C(0x28)
++#define SURYA_DT_IOMMU_CLK0_MASK UINT64_C(0x1)
++#define SURYA_DT_IOMMU_CLK0_OFFSET UINT64_C(0x71004)
++#define SURYA_DT_IOMMU_CLK1_ID UINT64_C(0x1b)
++#define SURYA_DT_IOMMU_CLK1_MASK UINT64_C(0x1)
++#define SURYA_DT_IOMMU_CLK1_OFFSET UINT64_C(0x4452c)
++#define SURYA_DT_IOMMU_CLK2_ID UINT64_C(0x2b)
++#define SURYA_DT_IOMMU_CLK2_MASK UINT64_C(0x1)
++#define SURYA_DT_IOMMU_CLK2_OFFSET UINT64_C(0x7100c)
 +#define SURYA_DT_MEMNOC_CLOCK_ID UINT64_C(0x2b)
 +#define SURYA_DT_PDC_CFG_PA UINT64_C(0xb290000)
 +#define SURYA_DT_PDC_CFG_SIZE UINT64_C(0x10000)
@@ -194,7 +203,7 @@ index 0000000..e0f8ac8
 +#endif
 diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
 new file mode 100644
-index 0000000..cee1ddd
+index 0000000..f76ab63
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.c
 @@ -0,0 +1,453 @@
@@ -637,8 +646,8 @@ index 0000000..cee1ddd
 +            printf("SURYA GPU CORE: RBBM_STATUS=%#x STATUS3=%#x GBIF_QOS=%#x\n",
 +                st.rbbm_status, st.rbbm_status3, st.gbif_qos);
 +        }
-+        printf("SURYA UNIXNU SMMU: stage=%d code=%d GCC UNPROBED\n",
-+            unixnu.stage, unixnu.code);
++        printf("SURYA UNIXNU SMMU: stage=%d code=%d DT clocks=%#x\n",
++            unixnu.stage, unixnu.code, unixnu.clocks_ready);
 +        printf("SURYA UNIXNU ID: ID0=%#x ID1=%#x ID2=%#x SCR0=%#x\n",
 +            unixnu.id0, unixnu.id1, unixnu.id2, unixnu.scr0);
 +        printf("SURYA UNIXNU CB0: off=%#x SCTLR=%#x FSR=%#x TCR=%#x TTBR0=%#llx\n",
