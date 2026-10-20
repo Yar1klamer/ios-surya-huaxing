@@ -11,6 +11,16 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## A618 OOB protocol correction (2026-10-20)
 
+Commit34a5329507b2c583bfb8ad3700ce084a7acefc4c, CI39473002362 passed.
+Kernel SHA256 f1f172a3edfaa9b9dcd0b2b163140c6da3550e3f8bc96f92e6684e56602993ff.
+Boot image research/gpu-oob6-ready/boot-gpu-oob6.img,20246528 bytes;
+SHA256 5d56a7327c4b48327e5ead4e6dfb491480814cae0a9c453254ae69a6d66f87c8.
+Verified CI checksum/plainARM64/new OOB6 marker, exact embedded payload,
+SURYA boot profile and both firmware bytes. Owner replied ready; temporary
+fastboot boot accepted (Sending0.485s, Booting5.094s, exit0). No partition flash.
+Screen outcome PENDING photo; do not infer handshake/GX power or GPU execution
+from Fastboot success. See ignored build.json/inputs.json/fastboot.log.
+
 Resumed from Gemini HEAD09d75eb. Owner photo1a0cdb7e confirms BABEFACE,
 status0x800000, GX off0x08222000. Source audit: A618/A615 boot/slumber enum6
 requires set bit22, ACK bit30, release bit30; old code sent bit18/checked18/26.
