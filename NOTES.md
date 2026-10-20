@@ -9,6 +9,23 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Physical touch-to-HID milestone (2026-10-20)
+
+Owner photo638b0293 confirms real hardware firmware upload: all5 SRAM parts
+verified, event reset=a1 fw=c2/3d, firmware boot result0. It also shows a
+nonzero contact mask0x1, SWEET HID touch0 down then up. This establishes physical
+touch packets reaching the HID service, not yet functional Lock Screen gestures.
+Packaged SAME verified CI39440263048 kernel + pinned Tianma firmware using GUI
+profile (sweettouch1, noconsole1, hz30, no suryatouchreport pause). Kernel SHA256
+c6ce190df531b572f24cc75ac9aa0e4ff4b5c0604df0754fdb1cf953b5ebf912 unchanged.
+Image research/touch-gui-ready/boot-touch-gui.img,20197376 bytes,SHA256
+ efc133156d905b5ee22c89abd37162d974cdc14f678e15b02a36b02d115cc6a4.
+Payload and embedded firmware verified; no new kernel build or filesystem flash.
+Owner replied ready; exactly one Fastboot phone. Temporary boot SendingOKAY
+0.495s BootingOKAY5.093s,exit0,total5.598s. Await Lock Screen swipe/tap result.
+This is a temporary boot image; no boot partition installation authorized here.
+Pending0087, protocol-generator,fetch-helper and kernel-art.zip remain untouched.
+
 ## Volatile Tianma firmware loader (2026-10-20)
 
 Owner photo db09d81e: SPI probe still err0 with correct trim; event read err0,
