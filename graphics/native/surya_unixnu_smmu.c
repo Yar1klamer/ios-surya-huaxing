@@ -1,6 +1,5 @@
-/* SURYA bridge to pinned UniXNU ArmSmmu4K, before live context attachment.
+/* SURYA bridge to pinned UniXNU ArmSmmu4K: live context & stream attachment.
  * DT-ordered KGSL clocks use branch definitions from the matching driver.
- * TTBR/SCTLR/streams/TLBs are never written; SMMU registers are read-only.
  */
 #if defined(ARM64_BOARD_CONFIG_SURYA)
 #include <sys/param.h>
@@ -11,6 +10,8 @@
 #include <vm/vm_kern.h>
 #include "surya_unixnu_smmu.h"
 #include "surya_gpu_dt.h"
+#include "ArmSmmu4KProgram.h"
+#include "ArmSmmu4KStreams.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
@@ -29,7 +30,44 @@ static uint64_t read64(vm_offset_t base, unsigned off)
     return value;
 }
 
-static int private_tables(struct surya_unixnu_smmu_report *r)
+static int io_read32(void *cookie, size_t at, uint32_t *out)
+{
+    vm_offset_t base = (vm_offset_t)cookie;
+    *out = read32(base, (unsigned)at);
+    return 0;
+}
+
+static int io_read64(void *cookie, size_t at, uint64_t *out)
+{
+    vm_offset_t base = (vm_offset_t)cookie;
+    *out = read64(base, (unsigned)at);
+    return 0;
+}
+
+static int io_write32(void *cookie, size_t at, uint32_t val)
+{
+    vm_offset_t base = (vm_offset_t)cookie;
+    *(volatile uint32_t *)(base + at) = val;
+    __asm__ volatile("dmb oshst" ::: "memory");
+    return 0;
+}
+
+static int io_write64(void *cookie, size_t at, uint64_t val)
+{
+    vm_offset_t base = (vm_offset_t)cookie;
+    *(volatile uint64_t *)(base + at) = val;
+    __asm__ volatile("dmb oshst" ::: "memory");
+    return 0;
+}
+
+static int io_barrier(void *cookie)
+{
+    (void)cookie;
+    __asm__ volatile("dsb osh; isb" ::: "memory");
+    return 0;
+}
+
+static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
 {
     vm_offset_t tables = 0, data = 0;
     if (PAGE_SIZE != 16384) return 100;
@@ -68,14 +106,78 @@ static int private_tables(struct surya_unixnu_smmu_report *r)
         if ((descriptor & UINT64_C(0x0000fffffffff000)) + (off & 4095) !=
             data_physical + off) return 106;
     }
+
+    /* Clean cache to Point of Coherency (PoC) for table memory so SMMU hardware walker sees descriptors in DDR */
+    for (uintptr_t p = (uintptr_t)tables; p < (uintptr_t)tables + 16384; p += 64) {
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb sy; isb" ::: "memory");
+
+    /* Populate test data buffer with sentinel pattern */
+    *(volatile uint64_t *)data = 0xCAFEBABEDEADBEEFULL;
+    for (uintptr_t p = (uintptr_t)data; p < (uintptr_t)data + 16384; p += 64) {
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb sy; isb" ::: "memory");
+
     ArmSmmu4KContextConfig context = {0};
     context.lower = &config;
     context.lower_tables = &built;
     context.id0 = r->id0; context.id2 = r->id2;
-    context.asid = 1; /* hypothetical image only; no ASID is claimed */
+    context.asid = 1;
     context.stall_on_fault = 1;
-    ArmSmmu4KContextImage image = {0};
-    return ArmSmmu4KEncodeContext(&context, &image);
+    context.coherent_walk = 0;
+
+    ArmSmmu4KIo io = {
+        .cookie = (void *)smmu,
+        .register_bytes = SURYA_DT_SMMU_SIZE,
+        .read32 = io_read32,
+        .read64 = io_read64,
+        .write32 = io_write32,
+        .write64 = io_write64,
+        .barrier = io_barrier,
+    };
+
+    printf("SURYA UNIXNU STEP 12: program and activate context bank 0\n");
+    delay(20000);
+    ArmSmmu4KProgramResult prog_res = {0};
+    ArmSmmu4KStatus prog_status = ArmSmmu4KProgramDisabledContext(&io, 0, &context, 10000, &prog_res);
+    printf("SURYA UNIXNU PROG: status=%d phase=%u enabled=%u writes=%u fault=%#x\n",
+        prog_status, prog_res.phase, prog_res.enabled, prog_res.writes, prog_res.fault_status);
+    delay(20000);
+    if (prog_status != ArmSmmu4KSuccess) return 30 + (int)prog_status;
+
+    r->active_sctlr = read32(smmu, r->cb_offset);
+    r->active_fsr = read32(smmu, r->cb_offset + 0x58);
+    r->context_enabled = prog_res.enabled;
+    printf("SURYA UNIXNU STEP 13: CB0 SCTLR=%#x FSR=%#x (%s)\n",
+        r->active_sctlr, r->active_fsr, r->context_enabled ? "ACTIVE" : "INACTIVE");
+    delay(20000);
+
+    printf("SURYA UNIXNU STEP 14: attach GPU stream %llu to context bank 0\n", SURYA_DT_USER_SID);
+    delay(20000);
+
+    /* Pre-attach requirement: slot 0 S2CR set to FAULT */
+    io_write32((void *)smmu, 0xc00 + 0 * 4, 2u << 16);
+    io_barrier(NULL);
+
+    ArmSmmu4KStream stream = { .slot = 0, .sid = (uint16_t)SURYA_DT_USER_SID };
+    ArmSmmu4KStreamState stream_state = {0};
+    ArmSmmu4KStreamResult stream_res = {0};
+    ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, &stream, 1, 0, &context, &stream_res);
+    printf("SURYA UNIXNU ATTACH: status=%d verified=%u writes=%u\n",
+        attach_status, stream_res.streams_verified, stream_res.writes);
+    delay(20000);
+
+    r->smr0 = read32(smmu, 0x800 + 0 * 4);
+    r->s2cr0 = read32(smmu, 0xc00 + 0 * 4);
+    if (attach_status != ArmSmmu4KSuccess) return 40 + (int)attach_status;
+    r->streams_attached = stream_state.attached;
+    printf("SURYA UNIXNU STEP 15: SMR0=%#x S2CR0=%#x (%s)\n",
+        r->smr0, r->s2cr0, r->streams_attached ? "ATTACHED" : "UNATTACHED");
+    delay(20000);
+
+    return 0;
 }
 
 static int prepare_dt_clocks(struct surya_unixnu_smmu_report *r)
@@ -172,10 +274,14 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
     printf("SURYA UNIXNU STEP 10: SCTLR=%#x FSR=%#x; read TTBR0\n", r->cb_sctlr, r->cb_fsr);
     delay(20000);
     r->cb_ttbr0 = read64(smmu, r->cb_offset + 0x20);
-    printf("SURYA UNIXNU STEP 11: CB0 read; build inactive tables\n");
+    printf("SURYA UNIXNU STEP 11: CB0 read; build & activate live tables\n");
     delay(20000);
     r->stage = 4;
-    r->code = private_tables(r);
-    if (!r->code) r->stage = 5;
+    r->code = live_tables(r, smmu);
+    if (!r->code) {
+        r->stage = 5;
+        if (r->context_enabled) r->stage = 6;
+        if (r->streams_attached) r->stage = 7;
+    }
 }
 #endif

@@ -22,6 +22,8 @@ def generate():
     files = [(p.name, p.read_bytes()) for p in (
         vendor / 'ArmSmmu4K.h', vendor / 'ArmSmmu4K.c',
         vendor / 'ArmSmmu4KContext.h', vendor / 'ArmSmmu4KContext.c',
+        vendor / 'ArmSmmu4KProgram.h', vendor / 'ArmSmmu4KProgram.c',
+        vendor / 'ArmSmmu4KStreams.h', vendor / 'ArmSmmu4KStreams.c',
         ROOT / 'graphics/native/surya_unixnu_smmu.h',
         ROOT / 'graphics/native/surya_unixnu_smmu.c')]
     # Preserve the upstream MIT notice inside the source patch as well.
@@ -30,12 +32,14 @@ def generate():
     patch += '''diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,9 @@
+@@ -109,6 +109,11 @@
  bsd/dev/sweet_keys.c\t\t\tstandard
  bsd/dev/sweet_touch.c\t\t\tstandard
  bsd/dev/surya_gpu_pt.c\t\t\tstandard
 +bsd/dev/ArmSmmu4K.c\t\t\tstandard
 +bsd/dev/ArmSmmu4KContext.c\t\t\tstandard
++bsd/dev/ArmSmmu4KProgram.c\t\t\tstandard
++bsd/dev/ArmSmmu4KStreams.c\t\t\tstandard
 +bsd/dev/surya_unixnu_smmu.c\t\tstandard
  bsd/dev/sweet_rpmh.c\t\t\tstandard
  bsd/dev/sweet_spmi.c\t\t\tstandard

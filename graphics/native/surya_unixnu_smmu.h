@@ -1,4 +1,4 @@
-/* UniXNU ArmSmmu4K integration for SURYA. Inactive tables, no SMMU writes. */
+/* UniXNU ArmSmmu4K integration for SURYA. Live context and stream routing. */
 #ifndef SURYA_UNIXNU_SMMU_H
 #define SURYA_UNIXNU_SMMU_H
 #include "ArmSmmu4KContext.h"
@@ -9,6 +9,8 @@ struct surya_unixnu_smmu_report {
     uint64_t cb_ttbr0;
     unsigned table_pages, leaves, clocks_ready;
     int stage, code;
+    uint32_t active_sctlr, active_fsr, smr0, s2cr0;
+    unsigned context_enabled, streams_attached;
 };
 
 /* Decode real ID1 before touching a context bank. This only authorizes reads

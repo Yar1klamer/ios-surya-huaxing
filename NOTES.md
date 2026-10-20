@@ -9,6 +9,19 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## SMMUv2 Live Context Bank 0 Activation & Stream Attachment (2026-10-20)
+
+Advancing to Milestone 6 following photo 3c51568c confirmation.
+Embedded upstream UniXNU ArmSmmu4KProgram and ArmSmmu4KStreams into patch 0093.
+Implemented ArmSmmu4KIo callbacks for memory-mapped SMMU register operations.
+Added dc cvac cache cleaning for table and data memory to establish Point of Coherency (PoC)
+for non-coherent SMMU hardware walks.
+Activated Context Bank 0 via ArmSmmu4KProgramDisabledContext, enabling translation (SCTLR bit 0).
+Configured Stream 0 (SURYA_DT_USER_SID = 0) attachment to CB0 via ArmSmmu4KAttachStreams
+with S2CR0 fault preflight.
+Updated on-screen diagnostic loop to display live CB0 active SCTLR/FSR and SMR0/S2CR0 stream matching.
+All 59 unit tests pass.
+
 ## GPUCC HLOS1 SMMU clock vote enable & patch 0093 cleanup (2026-10-20)
 
 Commit b4d6c5fa57df0797305d21a2dc8a2ee365022802; CI 39500638783 passed.

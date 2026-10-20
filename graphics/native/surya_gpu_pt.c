@@ -443,8 +443,12 @@ surya_gpu_pt_diagnostic(void)
             unixnu.id0, unixnu.id1, unixnu.id2, unixnu.scr0);
         printf("SURYA UNIXNU CB0: off=%#x SCTLR=%#x FSR=%#x TCR=%#x TTBR0=%#llx\n",
             unixnu.cb_offset, unixnu.cb_sctlr, unixnu.cb_fsr, unixnu.cb_tcr, unixnu.cb_ttbr0);
-        printf("SURYA UNIXNU TABLES: pages=%u leaves=%u; inactive, no SMMU writes\n",
+        printf("SURYA UNIXNU TABLES: pages=%u leaves=%u (live 4KB tables)\n",
             unixnu.table_pages, unixnu.leaves);
+        printf("SURYA UNIXNU LIVE: CB0=%s SCTLR=%#x FSR=%#x SMR0=%#x S2CR0=%#x (%s)\n",
+            unixnu.context_enabled ? "ACTIVE" : "INACTIVE",
+            unixnu.active_sctlr, unixnu.active_fsr, unixnu.smr0, unixnu.s2cr0,
+            unixnu.streams_attached ? "ATTACHED" : "UNATTACHED");
         printf("No GPU commands submitted; Metal acceleration not enabled\n");
         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
