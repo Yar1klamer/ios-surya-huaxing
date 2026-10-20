@@ -19,7 +19,15 @@ probe-only and other peripheral gates. Captured Android DT confirms Novatek
 NVT-ts-spi at SE0 0x880000, reset GPIO8 and IRQ9. This fixes a startup omission;
 physical SPI communication and HID input still need hardware verification.
 Validation: 26 host tests and repository checks passed. Commit 07b4e39;
-CI run 39372748025 is building. Owner has returned the phone to Fastboot.
+CI run 39372748025 PASSED. Verified plain arm64 kernel SHA256
+654b20da35ebafc80c6d902ce52d6490f45f81ce38c2096797cfb02f5ea12120.
+Packaged research/touch-startup-ready/boot-touch-startup.img SHA256
+f474eab52903442c8578247abf60926debc396d2f5c319d815f2b835a88547da;
+Android v2 embedded payload verified byte-for-byte. Owner returned phone to
+Fastboot. Temporary boot sent successfully: Sending OKAY 0.486s, Booting OKAY
+5.095s, exit0, total5.593s. No partitions flashed. Screen/touch result pending;
+next obtain SURYA TOUCH clock/SE0/probe lines and try a Lock Screen swipe.
+Do not claim the touchscreen works based on successful fastboot transfer.
 Added --touch-diagnostic profile with touch enabled and console visible.
 Preserved pre-existing uncommitted 0087/protocol-generator/fetch-helper changes;
 they are not included in this fix. CI will use committed 0087, not those pending
