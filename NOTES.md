@@ -9,6 +9,17 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Verified GPUCC power domain & GMU clock bring-up boot (2026-10-20)
+
+CI run 39458765008 completed with success for commit de194f3.
+Extracted kernel 88886087f8fe4eb85d2cf05ef47a947129ec3a9a416b9088312d16a7e8e072dd.
+Packaged apple-gpu-pt-payload.bin (16730176 bytes) with pinned Tianma touch firmware.
+Built boot-apple-gpu-pt.img (20197376 bytes, SHA256 577be74b5756221bb44bbc7bcbacf572d3cc3258c358a7d514a134e9b0fb8449).
+Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.489s, Booting OKAY 5.093s).
+Tests CX GDSC power-on, AHB/CXO/GMU clocks, live GMU always-on counter delta, and GX GDSC status.
+Launchd intentionally paused to preserve userdata.
+Power + Volume Down returns to Fastboot.
+
 ## Verified GPU page-table diagnostic boot (2026-10-20)
 
 Fixed patch0092 git-apply headers and enforced pure LF line endings (tools/gen_gpu_pt_patch.py).
