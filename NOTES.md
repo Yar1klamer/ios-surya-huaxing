@@ -9,6 +9,27 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Metal-over-Vulkan feasibility (2026-10-20)
+
+Owner asks whether Metal can translate to Vulkan. Inspected existing graphics
+patches: current GUI uses QuartzCore CPU renderer and CPU framebuffer copies;
+no operational XNU Adreno kernel driver or native Vulkan stack established.
+Existing external projects worth evaluating: steelbrain/metal2vulkan (Metal
+shader translation + Vulkan-backed device API) and darlinghq/darling-metal
+(ABI-compatible framework implementation). Their existence is not proof of
+compatibility with this iOS16 root or XNU/Adreno port. Mesa Turnip is a reusable
+Adreno Vulkan driver candidate; requires an XNU GPU submission/memory/fence
+backend instead of assuming Linux/Android drivers load on XNU.
+Suggested sequence: bounded Adreno GPU bring-up and GPU buffer/command/fence
+smoke test; native Vulkan offscreen triangle; narrow Metal API/AIR shader path;
+IOSurface/presentation/CoreAnimation integration. Full Metal coverage and stock
+system-framework compatibility remain substantial unimplemented work. No GPU
+code or phone changes made for this assessment. Touch GUI swipe result from
+boot-touch-gui.img still pending; do not mark user-facing touch verified yet.
+Sources: https://docs.mesa3d.org/drivers/freedreno.html
+https://github.com/steelbrain/metal2vulkan
+https://github.com/darlinghq/darling-metal
+
 ## Physical touch-to-HID milestone (2026-10-20)
 
 Owner photo638b0293 confirms real hardware firmware upload: all5 SRAM parts
