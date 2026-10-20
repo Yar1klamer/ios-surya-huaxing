@@ -17,8 +17,10 @@ p.add_argument('--touch-diagnostic', action='store_true', help='enable touch wit
 
 p.add_argument('--touch-firmware', type=Path, help='pinned Poco Tianma controller RAM firmware')
 
+p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before launchd for offline XNU GPU table allocation checks')
+
 a = p.parse_args()
-if sum((a.diagnostic, a.gui, a.touch_diagnostic)) > 1:
+if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic)) > 1:
     raise SystemExit('select only one boot profile')
 kernel = a.kernel.read_bytes()
 if b'SURYA: bounded Apple root writes armed' not in kernel:
@@ -26,10 +28,12 @@ if b'SURYA: bounded Apple root writes armed' not in kernel:
 m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
-cmdline = surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
+cmdline = surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
+if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
+    raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt
 if a.touch_firmware:
-    if not (a.gui or a.touch_diagnostic):
+    if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic):
         raise SystemExit('touch firmware requires a touch-enabled boot profile')
     if b'SURYA TOUCH: loading verified Tianma image' not in kernel:
         raise SystemExit('kernel lacks the bounded Tianma SRAM loader')

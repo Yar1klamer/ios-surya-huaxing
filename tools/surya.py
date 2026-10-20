@@ -31,6 +31,8 @@ APPLE_GUI_CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -noprogress '
 # Visible touch bring-up without daemon stderr flooding or console muting.
 APPLE_TOUCH_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
                        ' suryatouchreport=1')
+APPLE_GPU_PT_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
+                        ' suryagpummu=1')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 
@@ -149,7 +151,7 @@ def validate_payload(blob):
     # Validate the same contract used by ADT generation, including address limits.
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
-    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE) if apple_root else (CMDLINE,)
+    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE) if apple_root else (CMDLINE,)
     if cmd not in allowed_cmdlines:
         raise ValueError('command line does not match the SURYA boot profile')
     touch_chosen = child(root, 'chosen')

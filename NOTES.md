@@ -9,6 +9,26 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Native allocation / offline GPU tables (2026-10-20)
+
+Owner requested continuing Metal work. Added graphics/native/surya_gpu_pt.h:
+ARM LPAE S1,4-KiB pages,39-bit VA format,one2-MiB private window,three tables
+inside16KiB. Only caller-owned data physical range accepted; reject alignment,
+overlap,duplicates,range overflow/corrupt entries. Explicit permissions and
+MAIR0xff44 contract; seal blocks map/unmap/reinit. Not attached to hardware;
+no MMIO,SMC,DMA,cache publication or TLB invalidation. Linuxv6.12 descriptor
+layout reference, new implementation. Added patch0092 compiling exact canonical
+header/C and a default-off XNU prelaunchd diagnostic. suryagpummu1 allocates
+16KiB private tables+16KiB data, checks16384 byte translations, bounds/unmap/seal,
+then repeats CPU TABLE TEST PASS or FAIL code. Does NOT enable SMMU/GPU.
+Normal GUI unchanged; --gpu-table-diagnostic is a separate allowed payload
+profile, kernel marker checked, retains touch firmware support.
+41 host tests/repo validation passed. Exact-source parity test checks patch
+against canonicalC/header. ASAN/UBSAN C harness passed512 maps,2097152 byte
+translations,all unmaps,ownership/seal. Next: kernelCI build, temporary diagnostic
+boot only when owner ready, actual allocation result before hardware attachment.
+Pre-existing0087/protocol/fetch-helper edits preserved. No full GPU/Metal claim.
+
 ## Graphics foundation implemented (2026-10-20)
 
 Owner explicitly requested proceeding with Metal-over-Vulkan. Added captured-DT

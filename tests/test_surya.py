@@ -122,6 +122,19 @@ class SuryaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             surya.validate_payload(b.replace(b'sweetusb=0', b'sweetusb=1'))
 
+    def test_gpu_table_profile_preserves_root_and_other_gates(self):
+        b = payload(apple=True)
+        cmd = surya.APPLE_GPU_PT_CMDLINE.encode()
+        b[0x48:mkpayload.SEG_TABLE] = bytes(mkpayload.SEG_TABLE - 0x48)
+        b[0x48:0x48 + len(cmd)] = cmd
+        self.assertEqual(surya.validate_payload(b)['stage'], 'apple-root')
+        self.assertIn(b'suryagpummu=1', cmd)
+        self.assertNotIn('suryagpummu', surya.APPLE_GUI_CMDLINE)
+        self.assertNotIn(b'suryatouchreport', cmd)
+        self.assertIn(b'sweetusb=0', cmd)
+        with self.assertRaises(ValueError):
+            surya.validate_payload(b.replace(b'sweetusb=0', b'sweetusb=1'))
+
     def test_valid_ramdisk_payload(self):
         self.assertEqual(surya.validate_payload(payload())['board'], 'surya')
 

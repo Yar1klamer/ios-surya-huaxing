@@ -97,3 +97,24 @@ operations must return an error; no fake GPU service or success-returning
 submission stub is part of this work. Metal framework, shader and IOSurface
 integration follow a working native Vulkan backend. Keep the working CPU GUI
 and touch image available throughout bring-up.
+
+## Private page-table component
+
+`graphics/native/surya_gpu_pt.h` builds offline ARM LPAE stage-1 tables for a
+single 2-MiB GPU VA window. Three 4-KiB tables occupy one XNU 16-KiB allocation.
+Only caller-owned physical pages can be mapped; table memory cannot overlap
+that allocation. Read/write, no-execute and cache attributes are explicit.
+Duplicate/unaligned/out-of-range maps fail. Corrupted table references fail
+closed. Sealing prohibits further mapping, unmapping or reinitialization.
+This component is not a live SMMU driver: no cache publication, TLB invalidation,
+TTBR programming or GPU access occurs. MAIR/layout must be matched explicitly
+by a future hardware attachment, after capabilities and power are verified.
+
+Patch0092 compiles the exact same header and an XNU diagnostic. The optional
+`--gpu-table-diagnostic` Apple payload profile adds `suryagpummu=1`, allocates
+private wired table/data pages and checks all 16384 byte translations plus
+bounds, unmap and sealing before pausing ahead of launchd. Normal GUI profiles
+leave it off. A pass means CPU-side table construction/allocation works; it
+is not GPU execution or a hardware SMMU walk.
+
+Descriptor reference: <https://github.com/torvalds/linux/blob/v6.12/drivers/iommu/io-pgtable-arm.c>
