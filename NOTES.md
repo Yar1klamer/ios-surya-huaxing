@@ -11,6 +11,15 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## UniXNU component integration (2026-10-20)
 
+Checkpoint rebuild912b0737c35aa65d54abc11dbf384d7f77192d45 / CI39480568263 passed,
+51 host checks/repo validation passed. Kernel SHA256 e84c3f5e1c32790f364e59e737170bb22d7930277537acfc5cefd7ab19557386.
+Image research/unixnu-checkpoint-ready/boot-unixnu-smmu.img SHA256
+1f1c88fd138760c660c87c67930ad2f2e4b8b8d292ce4accd08f915178ac00de. Verified exact firmware/payload/profile and STEP11 marker.
+Owner ready; temporary boot accepted Sending0.487s/Booting5.094s exit0.
+No partition flash. Await owner last SURYA UNIXNU STEP or photo; underlying
+failure NOT yet diagnosed or fixed. Stages0/power-result precede new bridge;
+steps1..11 delimit GCC mapping/read/vote, SMMU IDs, CB0 reads and table build.
+
 Source4638d731eca942fbc6f76e6053fb4db50121e8ae; CI39477736231 passed.
 Verified kernel checksum 0db4b727d942ead10fefa965e8cee56d5fc12f5270ee4f27de75490d31478cdc.
 Verified image research/unixnu-smmu-ready/boot-unixnu-smmu.img (20246528 bytes),
