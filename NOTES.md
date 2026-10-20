@@ -11,6 +11,14 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## GPUCC HLOS1 SMMU clock vote enable & patch 0093 cleanup (2026-10-20)
 
+Commit b4d6c5fa57df0797305d21a2dc8a2ee365022802; CI 39500638783 passed.
+Verified kernel SHA256 29850ec762d3ab5eeced1dcf6e6e22ab6bb47654820d57dfb83d9c3574812e4b.
+Image research/unixnu-smmu-vote-ready/boot-unixnu-smmu.img, 20246528 bytes,
+SHA256 543561598d0dcdc54dfd8956080d3b185dec37c2653f889e0f65d9d02fba436b.
+Verified CI checksum, ARM64, GPUCC/DT/STEP markers, exact payload/firmware/board profile.
+Temporary boot accepted Sending 0.492s / Booting 5.096s exit 0. No partition flash.
+Awaiting owner screen photo confirming STEP 5+ SMMU register reads and inactive table qualification.
+
 Root cause of SMMU base+0x20 (ID0) read stall identified: on SM7150/A618,
 SMMU MMIO at 0x05040000 requires the HLOS1 hardware clock vote in GPUCC!
 From research/gpucc-sm6150.c line 453, gpu_cc_hlos1_vote_gpu_smmu_clk
