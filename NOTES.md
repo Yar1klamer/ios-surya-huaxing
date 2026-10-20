@@ -21,6 +21,18 @@ No GUI/launchd in this diagnostic, no new MMIO operations or disk log writes.
 Normal GUI profile does not enable this pause. Pending protocol changes remain
 untouched and excluded from CI. Next: build, package --touch-diagnostic, temporary
 boot and photograph stable report. Physical touch remains unverified.
+Validation: 26 host tests, repository checks, and source-based C harness under
+ASAN/UBSAN passed (7-byte log chunks, filtering, literal formats, buffer limits).
+Commit a38f16f; CI 39435107057 compiled the kernel successfully. Overall job
+failed only finalizing the separate buildtree artifact (404); kernel upload
+succeeded. Downloaded kernel SHA256 matched SHA256SUMS and report markers:
+579ce1e0f8668446cdae19d560bb7e81f5d5873a3878c4efa099d0c9acc83914.
+Image research/touch-report-ready/boot-touch-report.img SHA256
+ e0ed887673afbe5c75647063a6f8e3f3a21523e9bd6122861c3407cc3da40cba
+(payload byte-verified). Owner replied ready; exactly one Fastboot device.
+Temporary boot Sending OKAY0.486s, Booting OKAY5.094s, exit0,total5.590s.
+No partitions flashed. Await photo of prelaunchd SURYA TOUCH BOOT REPORT.
+This mode deliberately stays before launchd; do not treat that pause as a hang.
 
 ## Touch startup correction (2026-10-20)
 
