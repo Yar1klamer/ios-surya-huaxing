@@ -132,10 +132,10 @@ index 0000000..14e2e11
 +#endif
 diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
 new file mode 100644
-index 0000000..f392f8c
+index 0000000..0788c6e
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.c
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,207 @@
 +/* Offline ARM LPAE table test & Adreno GPU power/clock bringup diagnostic. */
 +#if defined(ARM64_BOARD_CONFIG_SURYA)
 +#include <sys/param.h>
@@ -150,6 +150,9 @@ index 0000000..f392f8c
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 +extern int hz;
 +void surya_gpu_pt_diagnostic(void);
++
++#define SURYA_GPU_PA     0x05000000u
++#define SURYA_GPU_SIZE   0x2000u
 +
 +#define SURYA_GPUCC_PA   0x05090000u
 +#define SURYA_GPUCC_SIZE 0x3000u
@@ -216,28 +219,33 @@ index 0000000..f392f8c
 +    return 0;
 +}
 +
++struct surya_gpu_diag_state {
++    uint32_t cx_init, cx_on, ahb, gmu_clk;
++    uint32_t c1, c2, cm3_cfg, cm3_reset, hfi_ver;
++    uint32_t gx_init, gx_on, gx_clk;
++    uint32_t rbbm_status, rbbm_status3, gbif_qos;
++    bool gx_powered;
++};
++
 +static int
-+surya_gpu_power_check(uint32_t *p_cx_init, uint32_t *p_cx_on,
-+    uint32_t *p_ahb, uint32_t *p_gmu_clk,
-+    uint32_t *p_c1, uint32_t *p_c2, uint32_t *p_gx_init)
++surya_gpu_power_check(struct surya_gpu_diag_state *st)
 +{
++    memset(st, 0, sizeof(*st));
 +    vm_offset_t gpucc = ml_io_map(SURYA_GPUCC_PA, SURYA_GPUCC_SIZE);
 +    if (!gpucc) return 1;
 +
-+    uint32_t cx_init = sgpu_rd(gpucc, 0x106c);
-+    *p_cx_init = cx_init;
++    st->cx_init = sgpu_rd(gpucc, 0x106c);
 +
 +    /* Power on CX GDSC if collapsed (clear bit 0) */
-+    if (cx_init & 1u) {
-+        sgpu_wr(gpucc, 0x106c, cx_init & ~1u);
++    if (st->cx_init & 1u) {
++        sgpu_wr(gpucc, 0x106c, st->cx_init & ~1u);
 +        for (unsigned i = 0; i < 5000; ++i) {
 +            if (sgpu_rd(gpucc, 0x106c) & (1u << 31)) break;
 +            delay(1);
 +        }
 +    }
-+    uint32_t cx_on = sgpu_rd(gpucc, 0x106c);
-+    *p_cx_on = cx_on;
-+    if (!(cx_on & (1u << 31))) return 2; /* CX power on timeout */
++    st->cx_on = sgpu_rd(gpucc, 0x106c);
++    if (!(st->cx_on & (1u << 31))) return 2; /* CX power on timeout */
 +
 +    /* Enable GPU_CC_AHB_CLK (0x1078) */
 +    sgpu_wr(gpucc, 0x1078, sgpu_rd(gpucc, 0x1078) | 1u);
@@ -245,7 +253,7 @@ index 0000000..f392f8c
 +        if (!(sgpu_rd(gpucc, 0x1078) & (1u << 31))) break;
 +        delay(1);
 +    }
-+    *p_ahb = sgpu_rd(gpucc, 0x1078);
++    st->ahb = sgpu_rd(gpucc, 0x1078);
 +
 +    /* Enable CXO AON clock (0x1004) and CXO clock (0x109c) */
 +    sgpu_wr(gpucc, 0x1004, sgpu_rd(gpucc, 0x1004) | 1u);
@@ -258,21 +266,47 @@ index 0000000..f392f8c
 +        if (!(sgpu_rd(gpucc, 0x1098) & (1u << 31))) break;
 +        delay(1);
 +    }
-+    *p_gmu_clk = sgpu_rd(gpucc, 0x1098);
++    st->gmu_clk = sgpu_rd(gpucc, 0x1098);
 +
-+    /* Read GX GDSC initial state (0x100c) */
-+    *p_gx_init = sgpu_rd(gpucc, 0x100c);
-+
-+    /* Map GMU to read live hardware always-on counter */
++    /* Map GMU to read live hardware always-on counter and registers */
 +    vm_offset_t gmu = ml_io_map(SURYA_GMU_PA, SURYA_GMU_SIZE);
 +    if (!gmu) return 3;
 +
-+    /* A6XX_GMU_CX_GMU_ALWAYS_ON_COUNTER_L at GMU offset 0x14220 */
-+    uint32_t c1 = sgpu_rd(gmu, 0x14220);
++    st->c1 = sgpu_rd(gmu, 0x14220);
 +    delay(10000); /* 10 ms wait */
-+    uint32_t c2 = sgpu_rd(gmu, 0x14220);
-+    *p_c1 = c1;
-+    *p_c2 = c2;
++    st->c2 = sgpu_rd(gmu, 0x14220);
++
++    st->cm3_cfg = sgpu_rd(gmu, 0x140b4);
++    st->cm3_reset = sgpu_rd(gmu, 0x14000);
++    st->hfi_ver = sgpu_rd(gmu, 0x14604);
++
++    /* Read initial GX GDSC state (0x100c) */
++    st->gx_init = sgpu_rd(gpucc, 0x100c);
++
++    /* Enable GX GFX3D root clock (0x1054) */
++    sgpu_wr(gpucc, 0x1054, sgpu_rd(gpucc, 0x1054) | 1u);
++    st->gx_clk = sgpu_rd(gpucc, 0x1054);
++
++    /* Attempt to power up GX GDSC (clear SW_COLLAPSE bit 0) */
++    if (st->gx_init & 1u) {
++        sgpu_wr(gpucc, 0x100c, st->gx_init & ~1u);
++        for (unsigned i = 0; i < 5000; ++i) {
++            if (sgpu_rd(gpucc, 0x100c) & (1u << 31)) break;
++            delay(1);
++        }
++    }
++    st->gx_on = sgpu_rd(gpucc, 0x100c);
++    st->gx_powered = !!(st->gx_on & (1u << 31));
++
++    /* If GX power domain is active, safely probe GPU core registers */
++    if (st->gx_powered) {
++        vm_offset_t gpu = ml_io_map(SURYA_GPU_PA, SURYA_GPU_SIZE);
++        if (gpu) {
++            st->rbbm_status = sgpu_rd(gpu, 0x840);
++            st->rbbm_status3 = sgpu_rd(gpu, 0x84c);
++            st->gbif_qos = sgpu_rd(gpu, 0x44);
++        }
++    }
 +
 +    return 0;
 +}
@@ -287,17 +321,23 @@ index 0000000..f392f8c
 +    if (enabled != 1) return;
 +    int pt_res = surya_gpu_pt_check();
 +
-+    uint32_t cx_init = 0, cx_on = 0, ahb = 0, gmu_clk = 0, c1 = 0, c2 = 0, gx_init = 0;
-+    int pwr_res = surya_gpu_power_check(&cx_init, &cx_on, &ahb, &gmu_clk, &c1, &c2, &gx_init);
++    struct surya_gpu_diag_state st;
++    int pwr_res = surya_gpu_power_check(&st);
 +
 +    for (;;) {
 +        disableConsoleOutput = sweet_console_muted = 0;
 +        printf("\nSURYA GPU PAGE TABLE DIAGNOSTIC: %s code=%d\n",
 +            pt_res ? "FAIL" : "CPU TABLE TEST PASS", pt_res);
-+        printf("SURYA GPU POWER: %s code=%d (CX_GDSC=%#x->%#x AHB=%#x GMUCLK=%#x)\n",
-+            pwr_res ? "FAIL" : "PASS", pwr_res, cx_init, cx_on, ahb, gmu_clk);
-+        printf("SURYA GPU GMU: counter c1=%u c2=%u (delta=%u ticks) GX_GDSC=%#x\n",
-+            c1, c2, c2 - c1, gx_init);
++        printf("SURYA GPU CX: %s code=%d CX_GDSC=%#x->%#x AHB=%#x GMUCLK=%#x\n",
++            pwr_res ? "FAIL" : "PASS", pwr_res, st.cx_init, st.cx_on, st.ahb, st.gmu_clk);
++        printf("SURYA GPU GMU: c1=%u c2=%u delta=%u CM3_CFG=%#x RESET=%#x HFI=%#x\n",
++            st.c1, st.c2, st.c2 - st.c1, st.cm3_cfg, st.cm3_reset, st.hfi_ver);
++        printf("SURYA GPU GX: GDSC=%#x->%#x (%s) GFXCLK=%#x\n",
++            st.gx_init, st.gx_on, st.gx_powered ? "ON" : "OFF", st.gx_clk);
++        if (st.gx_powered) {
++            printf("SURYA GPU CORE: RBBM_STATUS=%#x STATUS3=%#x GBIF_QOS=%#x\n",
++                st.rbbm_status, st.rbbm_status3, st.gbif_qos);
++        }
 +        printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
 +        (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
 +    }
