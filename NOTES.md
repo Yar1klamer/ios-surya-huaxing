@@ -9,6 +9,28 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## UniXNU component integration (2026-10-20)
+
+Owner asked to use UniXNU's stack for our GPU. Fetched actual UniXNU
+0597c81b4d571f4706f7bbcf03ca51fe5b6e868b, pinned submodules. Vendored MIT
+ArmSmmu4K4d0d659 (all portable sources/headers/tests) and exact NativeAdrenoABI
+805c7e4. Licenses/hash manifest in graphics/vendor/unixnu. No fake GPU service.
+NativeAdreno is A740-specific and upstream CP init is A7xx; not transplanted
+blindly. Read-only reference checkout research/unixnu-reference/UniXNU.
+Patch0093 compiles actual ArmSmmu4KBuild/EncodeContext into existing iOS16 kernel.
+SURYA bridge only after OOB6+GX success: source-defined GPU MEMNOC clock vote
+(GCC0x17100c); read SMMU0x5040000 IDs, validate geometry, record CB0 regs.
+No SMMU writes/fault clears/stream changes or context programming. Builds private
+wired16KiB tables+16KiB data with upstream code, independently walks16384 bytes,
+encodes inactive context from actual ID0/ID2. Stage5/code0 is qualification only.
+Native GPU submission/Turnip/Metal frontend remain unfinished. New diagnostic
+lines prefix SURYA UNIXNU; preserve the verified OOB6 image as fallback.
+51 host tests passed: four upstream software fixture executables, ARM64 production
+MMIO-adapter cross-compile, ABI asserts, pinned hashes, patch parity and geometry.
+Not all upstream source-oracle suites run; no host MMIO substitution or QEMU.
+Next: CI, package/temporary boot when owner ready, inspect actual SMMU report.
+
+
 ## A618 OOB protocol correction (2026-10-20)
 
 Commit34a5329507b2c583bfb8ad3700ce084a7acefc4c, CI39473002362 passed.

@@ -1,0 +1,521 @@
+diff --git a/bsd/dev/ArmSmmu4K.h b/bsd/dev/ArmSmmu4K.h
+new file mode 100644
+index 0000000..1b09a29
+--- /dev/null
++++ b/bsd/dev/ArmSmmu4K.h
+@@ -0,0 +1,63 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef ARM_SMMU_4K_H
++#define ARM_SMMU_4K_H
++#include <stddef.h>
++#include <stdint.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef enum {
++    ArmSmmu4KSuccess = 0, ArmSmmu4KArgument, ArmSmmu4KBadRange,
++    ArmSmmu4KOverlap, ArmSmmu4KCapacity, ArmSmmu4KBudget,
++    ArmSmmu4KUnsupported, ArmSmmu4KStateMismatch,
++    ArmSmmu4KIoError, ArmSmmu4KTimeout, ArmSmmu4KBusy, ArmSmmu4KFault
++} ArmSmmu4KStatus;
++typedef struct {
++    unsigned input_bits;           /* 32..48, low-address TTBR0 profile. */
++    unsigned output_bits;          /* 32,36,40,42,44,48. */
++    uint64_t table_physical;        /* Caller-owned contiguous pool, aligned 4K. */
++    size_t leaf_budget;            /* Explicit upper bound on mapping work. */
++} ArmSmmu4KConfig;
++enum {ArmSmmu4KRead=1,ArmSmmu4KWrite=2,ArmSmmu4KExecute=4,ArmSmmu4KPrivileged=8};
++typedef struct {
++    uint64_t iova, physical, bytes;
++    unsigned permissions;          /* Read required; optional Write/Execute/Privileged. */
++    unsigned writeback;            /* 0=normal NC, 1=normal WB/WA. */
++    unsigned shareability;         /* 2=outer, 3=inner; explicit, no default. */
++} ArmSmmu4KRange;
++typedef struct {
++    uint64_t root_physical;
++    uint64_t mair;                 /* NC at index 0, WB/WA at index 1. */
++    size_t table_pages, leaf_pages;
++    unsigned start_level;
++    unsigned upper_region;        /* 0=Build TTBR0, 1=BuildUpper TTBR1. */
++} ArmSmmu4KResult;
++
++/* Build inactive ARM LPAE stage-1 tables with ONLY 4K level-3 leaves.
++ * Sorted disjoint low IOVA ranges; no sign extension or input conversion.
++ * No resource may map the table pool. Conflicting cache/shareability/privilege
++ * aliases refuse. Default 1/3 retains unprivileged PXN/UXN behavior. Execute
++ * and Privileged explicitly describe DEVICE-stage1 accesses (e.g. firmware),
++ * never CPU permissions or authorization to execute unauthenticated images.
++ * All validation/capacity checks precede table writes. Failure zeros result
++ * and leaves tables untouched. Success writes only result.table_pages pages.
++ * Caller guarantees real accessible, disjoint storage, immutable inputs,
++ * native-endian uint64_t table storage aligned to at least 8 bytes, actual
++ * physical ownership and matching CPU attributes/cache maintenance.
++ * NO MMIO, allocation, barriers, TLB operations or activation. This does NOT
++ * prove hardware support, coherent walks or a live isolated GPU context. */
++ArmSmmu4KStatus ArmSmmu4KBuild(const ArmSmmu4KConfig *config,
++    const ArmSmmu4KRange *ranges, size_t range_count, uint64_t *tables,
++    size_t table_capacity_pages, ArmSmmu4KResult *result);
++/* Same native 4K format for TTBR1's upper, sign-extended address region.
++ * IOVAs must already be in [2^64-2^input_bits,2^64); truncated low addresses
++ * refuse. Uses the architectural partial-root index width. No lower-region
++ * remapping, page-size conversion, MMIO or translation activation occurs. */
++ArmSmmu4KStatus ArmSmmu4KBuildUpper(const ArmSmmu4KConfig *config,
++    const ArmSmmu4KRange *ranges, size_t range_count, uint64_t *tables,
++    size_t table_capacity_pages, ArmSmmu4KResult *result);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/bsd/dev/ArmSmmu4K.c b/bsd/dev/ArmSmmu4K.c
+new file mode 100644
+index 0000000..be5f302
+--- /dev/null
++++ b/bsd/dev/ArmSmmu4K.c
+@@ -0,0 +1,111 @@
++/* SPDX-License-Identifier: MIT */
++#include "ArmSmmu4K.h"
++#define PAGE_BYTES UINT64_C(4096)
++#define ADDRESS_MASK UINT64_C(0x0000fffffffff000)
++
++static ArmSmmu4KStatus build_region(const ArmSmmu4KConfig *config,
++    const ArmSmmu4KRange *ranges, size_t range_count, uint64_t *tables,
++    size_t capacity, ArmSmmu4KResult *result, unsigned upper)
++{
++    if (!result) return ArmSmmu4KArgument;
++    result->root_physical = result->mair = 0;
++    result->table_pages = result->leaf_pages = result->start_level = 0;
++    result->upper_region = 0;
++    if (!config || !ranges || !range_count || !tables || !capacity ||
++        capacity > SIZE_MAX / PAGE_BYTES || range_count > SIZE_MAX / sizeof(*ranges) ||
++        config->input_bits < 32 || config->input_bits > 48 ||
++        !(config->output_bits == 32 || config->output_bits == 36 || config->output_bits == 40 ||
++          config->output_bits == 42 || config->output_bits == 44 || config->output_bits == 48) ||
++        !config->leaf_budget || config->leaf_budget > (SIZE_MAX - 1) / 3 ||
++        ((uintptr_t)tables & 7)) return ArmSmmu4KArgument;
++    if (range_count > config->leaf_budget) return ArmSmmu4KBudget;
++    uint64_t input_limit = UINT64_C(1) << config->input_bits;
++    uint64_t output_limit = UINT64_C(1) << config->output_bits;
++    uint64_t pool_bytes = (uint64_t)capacity * PAGE_BYTES;
++    uint64_t pool = config->table_physical;
++    if ((pool & 4095) || pool >= output_limit || pool_bytes > output_limit - pool)
++        return ArmSmmu4KBadRange;
++    size_t leaves = 0;
++    uint64_t previous_end = 0;
++    for (size_t i = 0; i < range_count; ++i) {
++        const ArmSmmu4KRange *r = &ranges[i];
++        if (!r->bytes || ((r->iova | r->physical | r->bytes) & 4095) ||
++            (!(r->permissions & ArmSmmu4KRead) || (r->permissions & ~15u)) || r->writeback > 1 || (r->shareability != 2 && r->shareability != 3) ||
++            r->physical >= output_limit || r->bytes > output_limit - r->physical)
++            return ArmSmmu4KBadRange;
++        if (upper ? (r->iova < UINT64_MAX-input_limit+1 || r->bytes-1 > UINT64_MAX-r->iova) :
++                    (r->iova >= input_limit || r->bytes > input_limit-r->iova))
++            return ArmSmmu4KBadRange;
++        if (i && r->iova <= previous_end) return ArmSmmu4KOverlap;
++        previous_end = r->iova + (r->bytes-1);
++        if (r->physical < pool + pool_bytes && pool < r->physical + r->bytes)
++            return ArmSmmu4KOverlap;
++        for (size_t j = 0; j < i; ++j) {
++            if ((r->writeback != ranges[j].writeback || r->shareability != ranges[j].shareability || ((r->permissions ^ ranges[j].permissions) & ArmSmmu4KPrivileged)) && r->physical < ranges[j].physical + ranges[j].bytes &&
++                ranges[j].physical < r->physical + r->bytes) return ArmSmmu4KOverlap;
++        }
++        uint64_t pages = r->bytes / PAGE_BYTES;
++        if (pages > config->leaf_budget - leaves) return ArmSmmu4KBudget;
++        leaves += (size_t)pages;
++    }
++    /* Each range has at least one leaf, so the validated leaf budget also
++     * bounds the range/alias loops. Sorted IOVAs make prefix counting exact. */
++    unsigned levels = (config->input_bits - 12 + 8) / 9;
++    unsigned start = 4 - levels;
++    size_t required = 1;
++    uint64_t last[3] = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
++    for (size_t i = 0; i < range_count; ++i) {
++        for (uint64_t offset = 0; offset < ranges[i].bytes; offset += PAGE_BYTES) {
++            uint64_t va = ranges[i].iova + offset;
++            for (unsigned level = start; level < 3; ++level) {
++                uint64_t prefix = va >> (39 - 9 * level);
++                if (prefix != last[level]) { ++required; last[level] = prefix; }
++            }
++        }
++    }
++    if (required > capacity) return ArmSmmu4KCapacity;
++    for (size_t i = 0; i < required * 512; ++i) tables[i] = 0;
++    size_t next = 1;
++    for (size_t i = 0; i < range_count; ++i) {
++        const ArmSmmu4KRange *r = &ranges[i];
++        uint64_t attributes = (1u << 11) | (1u << 10) | 3;
++        if (!(r->permissions & ArmSmmu4KExecute)) attributes |= UINT64_C(3) << 53;
++        if (!(r->permissions & ArmSmmu4KPrivileged)) attributes |= 1u << 6;
++        if (!(r->permissions & ArmSmmu4KWrite)) attributes |= 1u << 7;
++        attributes |= (uint64_t)r->shareability << 8;
++        if (r->writeback) attributes |= 1u << 2;
++        for (uint64_t offset = 0; offset < r->bytes; offset += PAGE_BYTES) {
++            uint64_t va = r->iova + offset;
++            size_t table = 0;
++            for (unsigned level = start; level < 3; ++level) {
++                unsigned shift = 39-9*level;
++                unsigned width = level==start ? config->input_bits-shift : 9;
++                size_t slot = table * 512 + ((va >> shift) & ((1u<<width)-1));
++                if (!tables[slot]) tables[slot] = (pool + PAGE_BYTES * next++) | 3;
++                table = (size_t)(((tables[slot] & ADDRESS_MASK) - pool) / PAGE_BYTES);
++            }
++            tables[table * 512 + ((va >> 12) & 511)] = (r->physical + offset) | attributes;
++        }
++    }
++    result->root_physical = pool;
++    result->mair = 0xff44;
++    result->table_pages = required;
++    result->leaf_pages = leaves;
++    result->start_level = start;
++    result->upper_region = upper;
++    return ArmSmmu4KSuccess;
++}
++
++ArmSmmu4KStatus ArmSmmu4KBuild(const ArmSmmu4KConfig *config,
++    const ArmSmmu4KRange *ranges, size_t range_count, uint64_t *tables,
++    size_t capacity, ArmSmmu4KResult *result)
++{
++    return build_region(config,ranges,range_count,tables,capacity,result,0);
++}
++
++ArmSmmu4KStatus ArmSmmu4KBuildUpper(const ArmSmmu4KConfig *config,
++    const ArmSmmu4KRange *ranges, size_t range_count, uint64_t *tables,
++    size_t capacity, ArmSmmu4KResult *result)
++{
++    return build_region(config,ranges,range_count,tables,capacity,result,1);
++}
+diff --git a/bsd/dev/ArmSmmu4KContext.h b/bsd/dev/ArmSmmu4KContext.h
+new file mode 100644
+index 0000000..3c2faa4
+--- /dev/null
++++ b/bsd/dev/ArmSmmu4KContext.h
+@@ -0,0 +1,43 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef ARM_SMMU_4K_CONTEXT_H
++#define ARM_SMMU_4K_CONTEXT_H
++#include "ArmSmmu4K.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++typedef struct {
++    /* A config/result pair from Build, BuildUpper or LivePrepare; NULL pair disables it.
++     * A live arena may have zero mapped leaves while retaining its table topology.
++     * Both enabled regions need distinct physical pools and equal OAS/MAIR.
++     * The trusted caller retains actual pool ownership and immutable results. */
++    const ArmSmmu4KConfig *lower, *upper;
++    const ArmSmmu4KResult *lower_tables, *upper_tables;
++    uint32_t id0, id2;       /* Raw SMMUv2 identification register values. */
++    unsigned asid;          /* 0..65535, ownership managed by the caller. */
++    unsigned coherent_walk; /* Explicit: 1=inner WBWA, 0=outer NC. */
++    unsigned stall_on_fault, continue_after_fault; /* Each 0 or 1. */
++} ArmSmmu4KContextConfig;
++typedef struct {
++    uint32_t cbar, cba2r, tcr, tcr2, mair0, mair1, sctlr, reserved_zero;
++    uint64_t ttbr0, ttbr1;
++} ArmSmmu4KContextImage;
++
++/* Encode AArch64 stage1, stage2-bypass native4K SMMUv2 context registers.
++ * Capability/width/result/refusal checks precede publishing an image. Failure
++ * zeros it. Both TG0/TG1 select 4K even for a disabled region. No MMIO, power,
++ * stream/context assignment, cache barriers, TLB operations or activation.
++ * ID inputs are not proof that the caller read actual hardware. Inputs,
++ * their pointed-to configs/results, and output must be disjoint and immutable
++ * throughout the call; this is a trusted kernel integration boundary. */
++ArmSmmu4KStatus ArmSmmu4KEncodeContext(const ArmSmmu4KContextConfig *,
++    ArmSmmu4KContextImage *);
++/* Compare all supplied readback fields with the freshly encoded expected
++ * image. Caller must read real hardware and independently walk its actual
++ * TTBR tables, verify ownership/coherency and handle faults/TLB lifetime.
++ * Matching caller-supplied values alone never qualify an active GPU mapping. */
++ArmSmmu4KStatus ArmSmmu4KValidateContextReadback(const ArmSmmu4KContextConfig *,
++    const ArmSmmu4KContextImage *);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/bsd/dev/ArmSmmu4KContext.c b/bsd/dev/ArmSmmu4KContext.c
+new file mode 100644
+index 0000000..2cc334e
+--- /dev/null
++++ b/bsd/dev/ArmSmmu4KContext.c
+@@ -0,0 +1,84 @@
++/* SPDX-License-Identifier: MIT */
++#include "ArmSmmu4KContext.h"
++static int width_code(unsigned bits)
++{
++    switch(bits) {case 32:return 0;case 36:return 1;case 40:return 2;
++        case 42:return 3;case 44:return 4;case 48:return 5;default:return -1;}
++}
++static unsigned width_bits(unsigned code)
++{
++    switch(code) {case 0:return 32;case 1:return 36;case 2:return 40;
++        case 3:return 42;case 4:return 44;case 5:return 48;default:return 0;}
++}
++static int region_valid(const ArmSmmu4KConfig *c,const ArmSmmu4KResult *r,unsigned upper)
++{
++    if(!c || !r)return !c && !r;
++    if(c->input_bits<32 || c->input_bits>48 || width_code(c->output_bits)<0 ||
++        (c->table_physical&4095) || r->root_physical!=c->table_physical ||
++        r->mair!=0xff44 || r->upper_region!=upper || !r->table_pages ||
++        r->leaf_pages>c->leaf_budget || r->table_pages>UINT64_MAX/4096 ||
++        r->start_level!=4-(c->input_bits-12+8)/9)return 0;
++    uint64_t limit=UINT64_C(1)<<c->output_bits;
++    return r->root_physical<limit && (uint64_t)r->table_pages*4096<=limit-r->root_physical;
++}
++ArmSmmu4KStatus ArmSmmu4KEncodeContext(const ArmSmmu4KContextConfig *c,
++    ArmSmmu4KContextImage *out)
++{
++    if(!out)return ArmSmmu4KArgument;
++    out->cbar=out->cba2r=out->tcr=out->tcr2=out->mair0=out->mair1=out->sctlr=0;
++    out->reserved_zero=0;
++    out->ttbr0=out->ttbr1=0;
++    if(!c || (!c->lower && !c->upper) || c->asid>65535 || c->coherent_walk>1 ||
++        c->stall_on_fault>1 || c->continue_after_fault>1 ||
++        !region_valid(c->lower,c->lower_tables,0) || !region_valid(c->upper,c->upper_tables,1))return ArmSmmu4KArgument;
++    unsigned va=width_bits((c->id2>>8)&15),pa=width_bits((c->id2>>4)&15);
++    if(!(c->id0&(UINT32_C(1)<<30)) || !(c->id2&(1u<<12)) || !va || !pa)return ArmSmmu4KUnsupported;
++    const ArmSmmu4KConfig *basis=c->lower?c->lower:c->upper;
++    if(basis->output_bits>pa || (c->lower && c->lower->input_bits>va) ||
++        (c->upper && (c->upper->input_bits>va || c->upper->output_bits!=basis->output_bits)))return ArmSmmu4KUnsupported;
++    if(c->lower && c->upper) {
++        const ArmSmmu4KResult *a=c->lower_tables,*b=c->upper_tables;
++        if(a->root_physical<b->root_physical+(uint64_t)b->table_pages*4096 &&
++           b->root_physical<a->root_physical+(uint64_t)a->table_pages*4096)return ArmSmmu4KOverlap;
++    }
++    ArmSmmu4KContextImage v;
++    v.cbar=0x1f300; /* Stage1 translation, stage2 bypass; weakest bypass attrs. */
++    v.cba2r=1;      /* AArch64. No stage2 VMID or guest translation. */
++    v.tcr=UINT32_C(2)<<30; /* TG1=4K, TG0=4K. */
++    unsigned walk=c->coherent_walk?0x3500:0x2000;
++    if(c->lower)v.tcr|=walk|(64-c->lower->input_bits);
++    else v.tcr|=1u<<7; /* EPD0 */
++    if(c->upper)v.tcr|=(walk|(64-c->upper->input_bits))<<16;
++    else v.tcr|=1u<<23; /* EPD1 */
++    v.tcr2=(7u<<15)|(1u<<4)|(unsigned)width_code(basis->output_bits);
++    v.ttbr0=(uint64_t)c->asid<<48;v.ttbr1=v.ttbr0;
++    if(c->lower)v.ttbr0|=c->lower_tables->root_physical;
++    if(c->upper)v.ttbr1|=c->upper_tables->root_physical;
++    v.mair0=0xff44;v.mair1=0;
++    v.sctlr=0x1067|(c->stall_on_fault<<7)|(c->continue_after_fault<<8);
++    v.reserved_zero=0;
++    *out=v;
++    return ArmSmmu4KSuccess;
++}
++ArmSmmu4KStatus ArmSmmu4KValidateContextReadback(const ArmSmmu4KContextConfig *c,
++    const ArmSmmu4KContextImage *observed)
++{
++    if(!observed)return ArmSmmu4KArgument;
++    ArmSmmu4KContextImage expected;
++    ArmSmmu4KStatus status=ArmSmmu4KEncodeContext(c,&expected);
++    if(status!=ArmSmmu4KSuccess)return status;
++    /* TCR2.TBI0/TBI1 (bits 5/6, top-byte ignore) are written 0 but may read 1: the sheng Adreno MMU-500 reads
++     * 0x38071 for 0x38011 (int-008). Linux neither sets nor reads them back. With a 48-bit upstream bus the top
++     * byte of a device address is zero, so ignoring it changes no translation. Only 0 -> 1 is accepted here. */
++    const uint32_t tbi_set=observed->tcr2&~expected.tcr2&UINT32_C(0x60);
++    /* SCTLR.ASIDPNE (bit 12) is written 1 but may read 0: the same SMMU reads 0x167 for 0x1167 (int-009). Linux
++     * writes it and never reads it back. A shared ASID namespace is safe because every bank's ASID is the
++     * caller's exclusive lease. Only 1 -> 0 is accepted. */
++    const uint32_t asidpne_clear=expected.sctlr&~observed->sctlr&UINT32_C(0x1000);
++    if(expected.cbar!=observed->cbar || expected.cba2r!=observed->cba2r ||
++        expected.tcr!=observed->tcr || ((expected.tcr2^observed->tcr2)&~tbi_set) ||
++        expected.mair0!=observed->mair0 || expected.mair1!=observed->mair1 ||
++        ((expected.sctlr^observed->sctlr)&~asidpne_clear) || observed->reserved_zero || expected.ttbr0!=observed->ttbr0 ||
++        expected.ttbr1!=observed->ttbr1)return ArmSmmu4KStateMismatch;
++    return ArmSmmu4KSuccess;
++}
+diff --git a/bsd/dev/surya_unixnu_smmu.h b/bsd/dev/surya_unixnu_smmu.h
+new file mode 100644
+index 0000000..118c0bc
+--- /dev/null
++++ b/bsd/dev/surya_unixnu_smmu.h
+@@ -0,0 +1,32 @@
++/* UniXNU ArmSmmu4K integration for SURYA. Inactive tables, no SMMU writes. */
++#ifndef SURYA_UNIXNU_SMMU_H
++#define SURYA_UNIXNU_SMMU_H
++#include "ArmSmmu4KContext.h"
++
++struct surya_unixnu_smmu_report {
++    uint32_t memnoc_before, memnoc_after, id0, id1, id2, scr0;
++    uint32_t cb_sctlr, cb_fsr, cb_tcr, cb_offset;
++    uint64_t cb_ttbr0;
++    unsigned table_pages, leaves;
++    int stage, code;
++};
++
++/* Decode real ID1 before touching a context bank. This only authorizes reads
++ * inside the mapping, never a bank lease, activation or a stream reassignment. */
++static inline int
++surya_unixnu_cb0(uint32_t id1, size_t bytes, uint32_t *offset)
++{
++    if (!offset) return 1;
++    *offset = 0;
++    unsigned shift = (id1 >> 31) ? 16 : 12;
++    size_t pages = (size_t)1 << (((id1 >> 28) & 7) + 1);
++    size_t stride = (size_t)1 << shift;
++    unsigned banks = id1 & 255, s2 = (id1 >> 16) & 255;
++    if (!banks || banks > pages || s2 > banks || s2 != 0 ||
++        bytes < 2 * pages * stride) return 1;
++    *offset = (uint32_t)(pages * stride);
++    return 0;
++}
++
++void surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *);
++#endif
+diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
+new file mode 100644
+index 0000000..131d314
+--- /dev/null
++++ b/bsd/dev/surya_unixnu_smmu.c
+@@ -0,0 +1,112 @@
++/* SURYA bridge to pinned UniXNU ArmSmmu4K, before live context attachment.
++ * Only the documented GPU MEMNOC clock may be enabled. SMMU registers are
++ * read only; TTBR/SCTLR/streams/TLBs are never written by this diagnostic.
++ */
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
++#include "surya_unixnu_smmu.h"
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
++
++static uint32_t read32(vm_offset_t base, unsigned off)
++{
++    uint32_t value = *(volatile uint32_t *)(base + off);
++    __asm__ volatile("dmb oshld" ::: "memory");
++    return value;
++}
++
++static int private_tables(struct surya_unixnu_smmu_report *r)
++{
++    vm_offset_t tables = 0, data = 0;
++    if (PAGE_SIZE != 16384) return 100;
++    if (kmem_alloc_contig(kernel_map, &tables, 16384, PAGE_MASK, 0, 0,
++        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
++        return 101;
++    if (kmem_alloc_contig(kernel_map, &data, 16384, PAGE_MASK, 0, 0,
++        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
++        return 102;
++    ppnum_t tp = pmap_find_phys(kernel_pmap, (addr64_t)tables);
++    ppnum_t dp = pmap_find_phys(kernel_pmap, (addr64_t)data);
++    if (!tp || !dp) return 103;
++    const uint64_t physical = ptoa_64(tp), data_physical = ptoa_64(dp);
++    const uint64_t iova = UINT64_C(0x100000000);
++    ArmSmmu4KConfig config = {39, 36, physical, 4};
++    ArmSmmu4KRange range = {iova, data_physical, 16384,
++        ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2};
++    ArmSmmu4KResult built = {0};
++    ArmSmmu4KStatus status = ArmSmmu4KBuild(&config, &range, 1,
++        (uint64_t *)tables, 4, &built);
++    if (status) return status;
++    r->table_pages = (unsigned)built.table_pages;
++    r->leaves = (unsigned)built.leaf_pages;
++    /* Independent CPU walk over the actual newly allocated descriptors. */
++    for (unsigned off = 0; off < 16384; ++off) {
++        uint64_t table = physical, descriptor = 0;
++        for (unsigned shift = 30; ; shift -= 9) {
++            if (table < physical || table - physical >= 16384 || (table & 4095))
++                return 104;
++            descriptor = ((uint64_t *)tables)[(table - physical) / 8 +
++                (((iova + off) >> shift) & 511)];
++            if ((descriptor & 3) != 3) return 105;
++            if (shift == 12) break;
++            table = descriptor & UINT64_C(0x0000fffffffff000);
++        }
++        if ((descriptor & UINT64_C(0x0000fffffffff000)) + (off & 4095) !=
++            data_physical + off) return 106;
++    }
++    ArmSmmu4KContextConfig context = {0};
++    context.lower = &config;
++    context.lower_tables = &built;
++    context.id0 = r->id0; context.id2 = r->id2;
++    context.asid = 1; /* hypothetical image only; no ASID is claimed */
++    context.stall_on_fault = 1;
++    ArmSmmu4KContextImage image = {0};
++    return ArmSmmu4KEncodeContext(&context, &image);
++}
++
++void
++surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
++{
++    *r = (struct surya_unixnu_smmu_report){0};
++    r->stage = 1;
++    /* MiCode gcc-sm6150.c: gcc_gpu_memnoc_gfx_clk, enable/halt 0x7100c.
++     * DT provider is GCC at 0x100000; caller already verified CX/GX powered. */
++    vm_offset_t gcc = ml_io_map(0x171000, 0x1000);
++    if (!gcc) {r->code = 1; return;}
++    r->memnoc_before = read32(gcc, 0xc);
++    if (r->memnoc_before == UINT32_MAX || r->memnoc_before == 0xdeafbead) {
++        r->code = 2; return;
++    }
++    __asm__ volatile("dmb oshst" ::: "memory");
++    *(volatile uint32_t *)(gcc + 0xc) = r->memnoc_before | 1u;
++    __asm__ volatile("dsb osh" ::: "memory");
++    for (unsigned i = 0; i < 5000; ++i) {
++        r->memnoc_after = read32(gcc, 0xc);
++        if (!(r->memnoc_after & (1u << 31))) break;
++        delay(1);
++    }
++    if (r->memnoc_after & (1u << 31)) {r->code = 3; return;}
++    r->stage = 2;
++    vm_offset_t smmu = ml_io_map(0x05040000, 0x10000);
++    if (!smmu) {r->code = 4; return;}
++    r->id0 = read32(smmu, 0x20); r->id1 = read32(smmu, 0x24);
++    r->id2 = read32(smmu, 0x28); r->scr0 = read32(smmu, 0);
++    if (surya_unixnu_cb0(r->id1, 0x10000, &r->cb_offset)) {
++        r->code = 5; return;
++    }
++    r->stage = 3;
++    r->cb_sctlr = read32(smmu, r->cb_offset);
++    r->cb_fsr = read32(smmu, r->cb_offset + 0x58);
++    r->cb_tcr = read32(smmu, r->cb_offset + 0x30);
++    r->cb_ttbr0 = *(volatile uint64_t *)(smmu + r->cb_offset + 0x20);
++    __asm__ volatile("dmb oshld" ::: "memory");
++    r->stage = 4;
++    r->code = private_tables(r);
++    if (!r->code) r->stage = 5;
++}
++#endif
+diff --git a/bsd/dev/ArmSmmu4K.LICENSE b/bsd/dev/ArmSmmu4K.LICENSE
+new file mode 100644
+index 0000000..f5c4149
+--- /dev/null
++++ b/bsd/dev/ArmSmmu4K.LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 ArmSmmu4K contributors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -109,6 +109,9 @@
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+ bsd/dev/surya_gpu_pt.c			standard
++bsd/dev/ArmSmmu4K.c			standard
++bsd/dev/ArmSmmu4KContext.c			standard
++bsd/dev/surya_unixnu_smmu.c		standard
+ bsd/dev/sweet_rpmh.c			standard
+ bsd/dev/sweet_spmi.c			standard
+ bsd/dev/sweet_usb.c			standard

@@ -1,0 +1,45 @@
+{
+  "upstream": "https://github.com/UniXNU/UniXNU",
+  "commit": "0597c81b4d571f4706f7bbcf03ca51fe5b6e868b",
+  "components": {
+    "ArmSmmu4K": {
+      "repository": "https://github.com/UniXNU/ArmSmmu4K",
+      "commit": "4d0d6598b1a36aeec3de01091893fa6660e49388",
+      "files": {
+        "ArmSmmu4K.c": "0adb19b483e56e723014ed6cfe2c29f9d9735ae2770f62cf0057b22937dbd157",
+        "ArmSmmu4K.h": "e25063b9134afc7eb79e7c030bc2858608cf0ade5da714d5dfd600fee5007e8e",
+        "ArmSmmu4KAudit.c": "594739cebc43926b1cb0a0e965867bcf1edfb90fab9c51465b65fa47be3755c1",
+        "ArmSmmu4KAudit.h": "1f313acd46db3dfecc115b8c885c5c43f7d23f73690a6157f900dfc77b2c9f6a",
+        "ArmSmmu4KContext.c": "b8e32e32d1f07e71de65f31b12963ab8b01c05755f8c60c2d6f40cb03fe4eca8",
+        "ArmSmmu4KContext.h": "c842e78f37eab2e7cbba28cb89f4b993d9202503e75fee9e49a871101b936e53",
+        "ArmSmmu4KLive.c": "a50375331e7e3affc1b4ff9048508a75c080a468eff7c8f513b1f9937e2ba010",
+        "ArmSmmu4KLive.h": "7532ad419d630dd308628e60746860c992499474d14237f3f39e04e20e0722bb",
+        "ArmSmmu4KMmio.c": "439e6b50a3431c607611aa3b9af1f4f548e53b2fa1c452645a458c0606f7df38",
+        "ArmSmmu4KMmio.h": "face552cf67de969e8e741c0195496949f2c62b418d973e4d71a02f18ab83109",
+        "ArmSmmu4KProgram.c": "3b1d4911b0a48f90b09c721ffd2eb95dbfc02e96165009b23f8c98841f36e2b0",
+        "ArmSmmu4KProgram.h": "171900c3ed400b805c3a1587959f66bc4a19db18aedc8111e862651a90bb8d8f",
+        "ArmSmmu4KStreams.c": "359610de6974c1885b4b7bbf72e6b321a013e1cc44200e1a8f566d09722c009a",
+        "ArmSmmu4KStreams.h": "1cfca0b4e3acba420cc829098b52d61c4905ec64d2aa57883dedae9dfb212969",
+        "ArmSmmu4KTableMemory.c": "b39d3d4fc292b921672c089e930986345637aa029b422821867c72e7203feb92",
+        "ArmSmmu4KTableMemory.h": "316b85ee835686744feb7777b4216917578833e3ff510aeecc4bbe8325568f86",
+        "LICENSE": "7a730b868c1ff986cdfc210a7b140ab4e0a31bf7db1d15db901427973efaa70f",
+        "test_alias.c": "c1f652fe27fc38ca20c1144c6cb2d14e842418b003b9669837d73fb70c6b1a6f",
+        "test_audit.c": "25e87c17f0758863d8f1632fc42e10055e6573ebb677223e5f0b73650a269f3e",
+        "test_context.c": "6d6140bdb005356d3dda7eb5b13039e74df0d175b21d3f0e35476e7602120db5",
+        "test_live.c": "cd0f5b2a5e2e1497f9cc5543ab1699db1dd083125743084d029709b8fd6f436a",
+        "test_permissions.c": "fa6b1f6590899e7e029d3e8f60a6bdcc56acb1b9c126a918ce866fcac401062b",
+        "test_program.c": "7d12ed73d1ebd579188c248903b6000d5e54ced3b527ba5b19efd0b9a6970ea1",
+        "test_streams.c": "f6c656db6964743295b83105cd0d6331670cc3a73cfc1581faba06ff3e64595a",
+        "test_tables.c": "6fbd816805a4e2557f90faee334f3ad57526220ea03456d4cf3618d28d259d35"
+      }
+    },
+    "NativeAdreno": {
+      "repository": "https://github.com/UniXNU/NativeAdreno",
+      "commit": "805c7e4bfb7451eb6923f4a14dea8c657b9be7d2",
+      "files": {
+        "LICENSE": "16fbc0170994a48f60938d9f0d992d3bad113383cf90882f75c206e079c2a2dc",
+        "NativeAdrenoABI.h": "b5574e34ee3a368616f722f9fa40ea2c87bbc5c03989a299d9d4f954c9f8be70"
+      }
+    }
+  }
+}

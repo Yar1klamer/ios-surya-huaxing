@@ -9,6 +9,7 @@
 #include <pexpert/device_tree.h>
 #include "surya_gpu_pt.h"
 #include "surya_gmu_protocol.h"
+#include "surya_unixnu_smmu.h"
 
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
@@ -399,6 +400,10 @@ surya_gpu_pt_diagnostic(void)
 
     struct surya_gpu_diag_state st;
     int pwr_res = surya_gpu_power_check(&st);
+    struct surya_unixnu_smmu_report unixnu = {0};
+    unixnu.code = -1;
+    if (!pt_res && st.oob_ok && st.gx_powered)
+        surya_unixnu_smmu_capture(&unixnu);
 
     for (;;) {
         disableConsoleOutput = sweet_console_muted = 0;
@@ -427,6 +432,14 @@ surya_gpu_pt_diagnostic(void)
             printf("SURYA GPU CORE: RBBM_STATUS=%#x STATUS3=%#x GBIF_QOS=%#x\n",
                 st.rbbm_status, st.rbbm_status3, st.gbif_qos);
         }
+        printf("SURYA UNIXNU SMMU: stage=%d code=%d MEMNOC=%#x->%#x\n",
+            unixnu.stage, unixnu.code, unixnu.memnoc_before, unixnu.memnoc_after);
+        printf("SURYA UNIXNU ID: ID0=%#x ID1=%#x ID2=%#x SCR0=%#x\n",
+            unixnu.id0, unixnu.id1, unixnu.id2, unixnu.scr0);
+        printf("SURYA UNIXNU CB0: off=%#x SCTLR=%#x FSR=%#x TCR=%#x TTBR0=%#llx\n",
+            unixnu.cb_offset, unixnu.cb_sctlr, unixnu.cb_fsr, unixnu.cb_tcr, unixnu.cb_ttbr0);
+        printf("SURYA UNIXNU TABLES: pages=%u leaves=%u; inactive, no SMMU writes\n",
+            unixnu.table_pages, unixnu.leaves);
         printf("No GPU commands submitted; Metal acceleration not enabled\n");
         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);

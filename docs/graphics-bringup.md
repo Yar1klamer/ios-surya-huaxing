@@ -138,3 +138,35 @@ an unsuccessful handshake. Existing GX/MX indices1/1 are diagnostic inputs,
 not verified operating points: the stock driver derives these from RPMh
 command-database voltage dependency tables. A successful handshake still does
 not prove a GPU command, SMMU walk, Vulkan rendering, or Metal support.
+
+## UniXNU components used directly on SURYA
+
+Pinned UniXNU `0597c81b4d571f4706f7bbcf03ca51fe5b6e868b`, ArmSmmu4K
+`4d0d6598b1a36aeec3de01091893fa6660e49388`, and NativeAdreno wire ABI
+`805c7e4bfb7451eb6923f4a14dea8c657b9be7d2` are recorded with normalized-LF
+file hashes in `graphics/vendor/unixnu/sources.json`. MIT licenses are retained.
+The wire ABI is unmodified; importing it does not create an IOKit GPU service.
+
+Patch0093 compiles the actual upstream table builder and context encoder into
+our existing Darwin22/XNU8796 kernel. The SURYA bridge runs only after the
+verified GMU OOB6/GX power path. It enables the GPU MEMNOC clock using the
+captured DT GCC provider and Xiaomi gcc-sm6150.c's branch definition, then reads
+SMMU IDs and bounds-checks the discovered CB0 geometry. It records current CB0
+SCTLR/TTBR/TCR/fault state without clearing faults, changing routes, performing
+TLB operations, or programming a context. Its separate wired private allocation
+uses the upstream builder, independently walks all16384 byte translations, and
+asks the upstream encoder whether the observed capabilities admit39-bit VA /
+36-bit PA /4-KiB tables. The encoded image remains inactive.
+
+Diagnostic output: `SURYA UNIXNU SMMU`, `SURYA UNIXNU ID`, `SURYA UNIXNU CB0`,
+`SURYA UNIXNU TABLES`. Stage5/code0 is successful qualification, not hardware
+translation or command completion. NativeAdreno's A740 CP initialization,
+firmware/HFI and PM4 setup are not enabled on A618. The clock vote is the only
+new hardware write; SMMU register access is read-only.
+
+Host checks include four unmodified upstream software fixtures (tables, aliases,
+physical table audits and stream routing), the actual MMIO adapter cross-compiled
+to ARM64 without substituting host barriers, exact ABI layout assertions, pinned
+file hashes, patch/source parity and SURYA context geometry tests. The imported
+context/permissions/live source-oracle suites require their pinned Linux oracle
+setup and have not been run by this integration test. No QEMU boot is used.
