@@ -132,10 +132,10 @@ index 0000000..14e2e11
 +#endif
 diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
 new file mode 100644
-index 0000000..a96c5e1
+index 0000000..c2efc09
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.c
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,391 @@
 +/* Offline ARM LPAE table test & Adreno GPU power/clock bringup diagnostic. */
 +#if defined(ARM64_BOARD_CONFIG_SURYA)
 +#include <sys/param.h>
@@ -229,8 +229,8 @@ index 0000000..a96c5e1
 +struct surya_gpu_diag_state {
 +    uint32_t cx_init, cx_on, ahb, gmu_clk;
 +    uint32_t c1, c2, cm3_cfg, cm3_reset, hfi_ver;
-+    bool fw_found, itcm_loaded, pdc_ok, rsc_ok, oob_ok;
-+    uint32_t fw_size, cm3_init_res, oob_ack;
++    bool fw_found, itcm_loaded, pdc_ok, oob_ok;
++    uint32_t fw_size, itcm_check, cm3_init_res, oob_ack;
 +    uint32_t gx_init, gx_on, gx_clk;
 +    uint32_t rbbm_status, rbbm_status3, gbif_qos;
 +    bool gx_powered;
@@ -301,31 +301,18 @@ index 0000000..a96c5e1
 +}
 +
 +static int
-+surya_gpu_rsc_wake(vm_offset_t gmu)
-+{
-+    sgpu_wr(gmu, 0x24C1C, 2u); /* A6XX_GMU_RSCC_CONTROL_REQ BIT(1) */
-+    for (unsigned i = 0; i < 5000; ++i) {
-+        if (sgpu_rd(gmu, 0x24C20) & 2u) break; /* A6XX_GMU_RSCC_CONTROL_ACK */
-+        delay(1);
-+    }
-+    if (!(sgpu_rd(gmu, 0x24C20) & 2u)) return 1;
-+
-+    for (unsigned i = 0; i < 5000; ++i) {
-+        if (!sgpu_rd(gmu, 0x23404)) break; /* A6XX_RSCC_SEQ_BUSY_DRV0 */
-+        delay(1);
-+    }
-+    return 0;
-+}
-+
-+static int
-+surya_gmu_boot(vm_offset_t gmu, const uint32_t *fw, unsigned int fw_words,
++surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
 +    struct surya_gpu_diag_state *st)
 +{
 +    /* Copy firmware words to ITCM (0x3000) */
++    unsigned int fw_words = fw_len / 4;
 +    for (unsigned i = 0; i < fw_words; ++i) {
-+        sgpu_wr(gmu, 0x3000 + i * 4, fw[i]);
++        uint32_t val;
++        memcpy(&val, (const char *)fw_bytes + i * 4, 4);
++        sgpu_wr(gmu, 0x3000 + i * 4, val);
 +    }
 +    st->itcm_loaded = true;
++    st->itcm_check = sgpu_rd(gmu, 0x3000);
 +
 +    /* TCM retention */
 +    sgpu_wr(gmu, 0x14730, 1u); /* A6XX_GMU_GENERAL_7 */
@@ -465,11 +452,7 @@ index 0000000..a96c5e1
 +        if (pdc_cfg && pdc_seq) {
 +            surya_gpu_setup_pdc(gmu, pdc_cfg, pdc_seq);
 +            st->pdc_ok = true;
-+            int rsc_res = surya_gpu_rsc_wake(gmu);
-+            st->rsc_ok = (rsc_res == 0);
-+            if (st->rsc_ok) {
-+                surya_gmu_boot(gmu, (const uint32_t *)gmu_fw, gmu_fw_size / 4, st);
-+            }
++            surya_gmu_boot(gmu, gmu_fw, gmu_fw_size, st);
 +        }
 +    }
 +
@@ -525,10 +508,10 @@ index 0000000..a96c5e1
 +            pwr_res ? "FAIL" : "PASS", pwr_res, st.cx_init, st.cx_on, st.ahb, st.gmu_clk);
 +        printf("SURYA GPU GMU: c1=%u c2=%u delta=%u CM3_CFG=%#x RESET=%#x\n",
 +            st.c1, st.c2, st.c2 - st.c1, st.cm3_cfg, st.cm3_reset);
-+        printf("SURYA GPU FW: %s size=%u PDC=%s RSC=%s ITCM=%s INIT=%#x (%s)\n",
++        printf("SURYA GPU FW: %s size=%u PDC=%s ITCM=%#x INIT=%#x (%s)\n",
 +            st.fw_found ? "FOUND" : "NONE", st.fw_size,
-+            st.pdc_ok ? "OK" : "NO", st.rsc_ok ? "OK" : "NO",
-+            st.itcm_loaded ? "OK" : "NO", st.cm3_init_res,
++            st.pdc_ok ? "OK" : "NO",
++            st.itcm_check, st.cm3_init_res,
 +            (st.cm3_init_res == 0xBABEFACEu) ? "BABEFACE PASS" : "PENDING/FAIL");
 +        if (st.cm3_init_res == 0xBABEFACEu) {
 +            printf("SURYA GPU OOB: ACK=%#x (%s)\n", st.oob_ack, st.oob_ok ? "PASS" : "TIMEOUT");
