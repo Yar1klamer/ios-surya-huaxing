@@ -18,8 +18,15 @@ SHA256 5d56a7327c4b48327e5ead4e6dfb491480814cae0a9c453254ae69a6d66f87c8.
 Verified CI checksum/plainARM64/new OOB6 marker, exact embedded payload,
 SURYA boot profile and both firmware bytes. Owner replied ready; temporary
 fastboot boot accepted (Sending0.485s, Booting5.094s, exit0). No partition flash.
-Screen outcome PENDING photo; do not infer handshake/GX power or GPU execution
-from Fastboot success. See ignored build.json/inputs.json/fastboot.log.
+Owner photo50cc85a6 confirms native OOB6 ACK status0x40000000/code0,
+before0/raw0/busy0, full upload READBACK PASS, INIT0xbabeface, RPMH0xf/HFI0,
+GX GDSC0xf8222000 (PWR_ON set), GFXCLK0x4221. RBBM_STATUS1/STATUS3=0;
+GBIF_QOS0xdeafbead remains unresolved (not evidence of a usable register).
+GMU counter delta211472. This confirms corrected GMU handshake and powered GX,
+NOT GPU execution, active SMMU, Vulkan, or Metal acceleration. Launchd paused.
+Recorded in ignored build.json. Keep image as power-bring-up reference.
+Next native work: source-audited secure firmware/GPU initialization, private
+SMMU attachment and bounded command/fence completion; no fake UserClient success.
 
 Resumed from Gemini HEAD09d75eb. Owner photo1a0cdb7e confirms BABEFACE,
 status0x800000, GX off0x08222000. Source audit: A618/A615 boot/slumber enum6
@@ -33,7 +40,7 @@ release even on timeout; no GX clock/domain writes after failed transaction.
 Existing rail indices1/1 retained as diagnostic inputs, NOT derived operating
 points; stock driver uses RPMh command-database dependency tables.
 45 host tests/repo validation passed. No GPU commands or Metal acceleration.
-Next: build corrected kernel, temporary boot, inspect A618 OOB6 and GX photo.
+Corrected kernel built/booted; photo confirms OOB6 ACK and GX ON as above.
 Source: MiCode surya-q-oss drivers/gpu/msm/{adreno.h,kgsl_gmu_core.h,
 kgsl_hfi.h,adreno_a6xx_gmu.c}; ignored hashes in
 research/gpu-bringup/oob-source-audit.json. Original GUI image preserved.
