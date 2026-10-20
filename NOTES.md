@@ -17,7 +17,15 @@ Image research/unixnu-smmu-vote-ready/boot-unixnu-smmu.img, 20246528 bytes,
 SHA256 543561598d0dcdc54dfd8956080d3b185dec37c2653f889e0f65d9d02fba436b.
 Verified CI checksum, ARM64, GPUCC/DT/STEP markers, exact payload/firmware/board profile.
 Temporary boot accepted Sending 0.492s / Booting 5.096s exit 0. No partition flash.
-Awaiting owner screen photo confirming STEP 5+ SMMU register reads and inactive table qualification.
+Owner photo 3c51568c confirms complete SMMUv2 qualification:
+- SMMU stage=5 code=0 DT clocks=0xf (all 3 GCC clocks + GPUCC SMMU vote clock verified!)
+- ID0=0x40016605 (Stage 1 translation supported)
+- ID1=0x20000005 (CB0 offset 0x8000 verified)
+- ID2=0x7511 (4KB translation granule supported, VA/PA geometry matched)
+- SCR0=0x200626
+- CB0 off=0x8000 SCTLR=0 FSR=0 TCR=0 TTBR0=0
+- TABLES pages=3 leaves=4 (inactive private ArmSmmu4K tables successfully built and qualified against live registers)
+- OOB6 ACK bit30 code=0, GMU BABEFACE PASS, GX GDSC ON.
 
 Root cause of SMMU base+0x20 (ID0) read stall identified: on SM7150/A618,
 SMMU MMIO at 0x05040000 requires the HLOS1 hardware clock vote in GPUCC!
