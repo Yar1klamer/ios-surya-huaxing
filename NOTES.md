@@ -11,6 +11,16 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Device-tree-driven GPU resource integration (2026-10-20)
 
+Commit53cd81d4d62f3a09d0f92d01446f7caabe1140c3; CI39485093735 passed.
+55 host checks/repo validation passed. Verified kernel SHA256
+a6ab6ccd74deabe3b9b60e1aab87850ed64a0b075564f116d8ee759e1311e390.
+Image research/unixnu-dt-ready/boot-unixnu-smmu.img,20246528 bytes, SHA256
+364e9aee340830a8e931021b3bc633f62902cc167a80ad5891556f26ab92c26b. Verified CI checksum, ARM64, DT/STEP markers,
+exact embedded payload/firmware and board profile. Owner ready persisted from
+before steering. Temporary boot accepted Sending0.490s/Booting5.094s/exit0.
+No partition flash. Await native SURYA DT/UNIXNU ID/STEP photo; SMMU qualification
+and GPU execution remain UNVERIFIED. Earlier no-GCC-only build was not booted.
+
 Owner steered: use the device tree. Added tools/gen_surya_gpu_dt.py consuming
 captured research/live-surya-android/device-tree through existing typed parser.
 Generates sanitized graphics/native/surya_gpu_dt.h, property-evidence hash,
