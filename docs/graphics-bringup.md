@@ -170,3 +170,13 @@ to ARM64 without substituting host barriers, exact ABI layout assertions, pinned
 file hashes, patch/source parity and SURYA context geometry tests. The imported
 context/permissions/live source-oracle suites require their pinned Linux oracle
 setup and have not been run by this integration test. No QEMU boot is used.
+
+### Native observation: GCC probe blocked
+
+Photo098a889a stops at the first GCC MEMNOC read, before the clock vote or any
+SMMU access. Captured GCC compatible is `qcom,gcc-sdmmagpie`; the matching
+Xiaomi source confirms the same0x7100c branch offset. The diagnostic now omits
+all GCC reads/writes and labels it `GCC UNPROBED`. The existing verified GMU/GX
+power sequence precedes a separate read-only SMMU probe. It does not assert
+MEMNOC clock readiness; there are no new hardware writes or active contexts.
+The prior stall remains unexplained, and SMMU reads still require observation.

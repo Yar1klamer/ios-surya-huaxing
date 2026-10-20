@@ -1,6 +1,6 @@
 /* SURYA bridge to pinned UniXNU ArmSmmu4K, before live context attachment.
- * Only the documented GPU MEMNOC clock may be enabled. SMMU registers are
- * read only; TTBR/SCTLR/streams/TLBs are never written by this diagnostic.
+ * All hardware accesses here are read-only. The GCC probe is disabled after
+ * an observed access stall. TTBR/SCTLR/streams/TLBs are never written.
  */
 #if defined(ARM64_BOARD_CONFIG_SURYA)
 #include <sys/param.h>
@@ -73,31 +73,11 @@ void
 surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
 {
     *r = (struct surya_unixnu_smmu_report){0};
-    r->stage = 1;
-    printf("SURYA UNIXNU STEP 1: map GCC GPU MEMNOC clock\n");
-    delay(20000);
-    /* MiCode gcc-sm6150.c: gcc_gpu_memnoc_gfx_clk, enable/halt 0x7100c.
-     * DT provider is GCC at 0x100000; caller already verified CX/GX powered. */
-    vm_offset_t gcc = ml_io_map(0x171000, 0x1000);
-    if (!gcc) {r->code = 1; return;}
-    printf("SURYA UNIXNU STEP 2: read MEMNOC branch 0x17100c\n");
-    delay(20000);
-    r->memnoc_before = read32(gcc, 0xc);
-    if (r->memnoc_before == UINT32_MAX || r->memnoc_before == 0xdeafbead) {
-        r->code = 2; return;
-    }
-    printf("SURYA UNIXNU STEP 3: vote MEMNOC, prior=%#x\n", r->memnoc_before);
-    delay(20000);
-    __asm__ volatile("dmb oshst" ::: "memory");
-    *(volatile uint32_t *)(gcc + 0xc) = r->memnoc_before | 1u;
-    __asm__ volatile("dsb osh" ::: "memory");
-    for (unsigned i = 0; i < 5000; ++i) {
-        r->memnoc_after = read32(gcc, 0xc);
-        if (!(r->memnoc_after & (1u << 31))) break;
-        delay(1);
-    }
-    if (r->memnoc_after & (1u << 31)) {r->code = 3; return;}
-    printf("SURYA UNIXNU STEP 4: MEMNOC active=%#x; map SMMU\n", r->memnoc_after);
+    /* The owner-observed STEP2 stops at the first GCC0x17100c read.
+     * Do not repeat it or guess an alternate clock register. The established
+     * GMU/GX power path is retained. This is a separate read-only SMMU probe;
+     * it does not assert MEMNOC clock readiness or authorize activation. */
+    printf("SURYA UNIXNU STEP 4: GCC UNPROBED; read-only SMMU ID probe\n");
     delay(20000);
     r->stage = 2;
     vm_offset_t smmu = ml_io_map(0x05040000, 0x10000);

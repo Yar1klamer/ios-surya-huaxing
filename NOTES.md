@@ -11,6 +11,19 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## UniXNU component integration (2026-10-20)
 
+Owner photo098a889a confirms STEP0 and POWER RESULT code0/OOB1/GX1,
+STEP1 GCC mapping completes, then STEP2 first read0x17100c stops. No STEP3,
+so the subsequent clock vote and every SMMU access were NOT reached. Captured
+DT GCC compatible is qcom,gcc-sdmmagpie, base0x100000/size0x1f0000.
+Audited matching MiCode gcc-sdmmagpie.c: MEMNOC branch offset0x7100c agrees
+with earlier sm6150 source, so changing offsets speculatively is unjustified.
+Removed GCC reads/writes from the diagnostic. Next image separately probes
+SMMU IDs after established OOB/GX power, with explicit GCC UNPROBED label and
+no new hardware writes. This does NOT establish MEMNOC clock readiness or
+permit context activation. A SMMU read could still be blocked; checkpoints
+must establish what actually happens. Underlying GCC stall not fixed.
+
+
 Checkpoint rebuild912b0737c35aa65d54abc11dbf384d7f77192d45 / CI39480568263 passed,
 51 host checks/repo validation passed. Kernel SHA256 e84c3f5e1c32790f364e59e737170bb22d7930277537acfc5cefd7ab19557386.
 Image research/unixnu-checkpoint-ready/boot-unixnu-smmu.img SHA256

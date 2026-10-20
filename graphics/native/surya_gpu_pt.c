@@ -435,8 +435,8 @@ surya_gpu_pt_diagnostic(void)
             printf("SURYA GPU CORE: RBBM_STATUS=%#x STATUS3=%#x GBIF_QOS=%#x\n",
                 st.rbbm_status, st.rbbm_status3, st.gbif_qos);
         }
-        printf("SURYA UNIXNU SMMU: stage=%d code=%d MEMNOC=%#x->%#x\n",
-            unixnu.stage, unixnu.code, unixnu.memnoc_before, unixnu.memnoc_after);
+        printf("SURYA UNIXNU SMMU: stage=%d code=%d GCC UNPROBED\n",
+            unixnu.stage, unixnu.code);
         printf("SURYA UNIXNU ID: ID0=%#x ID1=%#x ID2=%#x SCR0=%#x\n",
             unixnu.id0, unixnu.id1, unixnu.id2, unixnu.scr0);
         printf("SURYA UNIXNU CB0: off=%#x SCTLR=%#x FSR=%#x TCR=%#x TTBR0=%#llx\n",
