@@ -22,6 +22,10 @@ Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.495s, Booting OKAY 5
 The diagnostic un-mutes console, verifies 16 KiB private tables and 16,384 translations in XNU RAM,
 and intentionally pauses before launchd so userdata is preserved.
 Power + Volume Down returns to Fastboot.
+Owner photo 1051833c confirms real hardware:
+- Tianma touch SRAM loader verified: 5 parts uploaded (77696, 16880, 3017, 2463, 256 bytes), reset=a1 fw=c2/3d, boot result 0, polling 10ms with live packets.
+- SURYA GPU PAGE TABLE DIAGNOSTIC: CPU TABLE TEST PASS code=0 repeated continuously.
+- Confirmed XNU 16-KiB memory allocation, LPAE stage-1 table generation, 16,384 translation walks, unmap, bounds and sealing on live Poco X3 NFC hardware.
 
 ## Native allocation / offline GPU tables (2026-10-20)
 
