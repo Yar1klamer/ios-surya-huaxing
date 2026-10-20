@@ -9,6 +9,23 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Verified Adreno GX domain & GMU register diagnostic boot (2026-10-20)
+
+CI run 39460513224 completed with success for commit f0f72ba.
+Extracted kernel 7d95154f13e32ce96523a1225bb39bdd3269448fe469b9ed25702f1d2a916b15.
+Packaged apple-gpu-pt-payload.bin (16730176 bytes) with pinned Tianma touch firmware.
+Built boot-apple-gpu-pt.img (20197376 bytes).
+Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.488s, Booting OKAY 5.093s).
+Owner photo 3b4ca5c5 confirms Milestone 3 live hardware readouts:
+- Tianma touch loader verified (reset=a0, fw=c2/3d, boot result 0, streaming packets mask=0).
+- SURYA GPU PAGE TABLE DIAGNOSTIC: CPU TABLE TEST PASS code=0.
+- SURYA GPU CX: PASS code=0 CX_GDSC=0x222001->0xf8222000 AHB=0x1 GMUCLK=0x4ff1.
+- SURYA GPU GMU: live silicon counter c1=1923, c2=213400 (delta=211477 ticks over 10 ms, 19.2 MHz clock), CM3_CFG=0x52, RESET=0x1 (held in reset), HFI=0.
+- SURYA GPU GX: GDSC=0x222001->0x8222000 (OFF) GFXCLK=0x80004221.
+- Key hardware discovery: GX GDSC collapse bit cleared, but PWR_ON (bit 31) remains 0 because the external PMIC rail VDD_GFX (PM6150 S2) is unpowered.
+- Hardware power architecture: On Snapdragon 730/732G (SM7150), VDD_GFX is managed by RPMh / Accelerator Resource Controller (ARC). The GMU Cortex-M3 (or CPU PDC sequencer) drives the RPMh GFX rail power request via OOB boot slumber.
+
+
 ## Verified GPUCC power domain & GMU clock bring-up boot (2026-10-20)
 
 CI run 39458765008 completed with success for commit de194f3.
