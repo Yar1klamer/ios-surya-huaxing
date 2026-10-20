@@ -9,13 +9,33 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## A618 OOB protocol correction (2026-10-20)
+
+Resumed from Gemini HEAD09d75eb. Owner photo1a0cdb7e confirms BABEFACE,
+status0x800000, GX off0x08222000. Source audit: A618/A615 boot/slumber enum6
+requires set bit22, ACK bit30, release bit30; old code sent bit18/checked18/26.
+CM3 fault is bit15, not bit23: prior fault interpretation was incorrect.
+Added exact protocol header with independent tests for all32 interrupt bits,
+fault overriding ACK, and rejection of the photographed status as an ACK.
+CM3 held reset during upload; all32768 bytes checked by word readback.
+Capture pre/post OOB, host raw, firmware busy, RPMh/HFI status; clear only ACK,
+release even on timeout; no GX clock/domain writes after failed transaction.
+Existing rail indices1/1 retained as diagnostic inputs, NOT derived operating
+points; stock driver uses RPMh command-database dependency tables.
+45 host tests/repo validation passed. No GPU commands or Metal acceleration.
+Next: build corrected kernel, temporary boot, inspect A618 OOB6 and GX photo.
+Source: MiCode surya-q-oss drivers/gpu/msm/{adreno.h,kgsl_gmu_core.h,
+kgsl_hfi.h,adreno_a6xx_gmu.c}; ignored hashes in
+research/gpu-bringup/oob-source-audit.json. Original GUI image preserved.
+
+
 ## Verified Adreno GX domain & GMU register diagnostic boot (2026-10-20)
 
 CI run 39460513224 completed with success for commit f0f72ba.
 Extracted kernel 7d95154f13e32ce96523a1225bb39bdd3269448fe469b9ed25702f1d2a916b15.
 Packaged apple-gpu-pt-payload.bin (16730176 bytes) with pinned Tianma touch firmware.
 Built boot-apple-gpu-pt.img (20197376 bytes).
-Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.488s, Booting OKAY 5.093s).
+Booted via fastboot boot to device [redacted] (Sending OKAY 0.488s, Booting OKAY 5.093s).
 Owner photo 3b4ca5c5 confirms Milestone 3 live hardware readouts:
 - Tianma touch loader verified (reset=a0, fw=c2/3d, boot result 0, streaming packets mask=0).
 - SURYA GPU PAGE TABLE DIAGNOSTIC: CPU TABLE TEST PASS code=0.
@@ -32,7 +52,7 @@ CI run 39458765008 completed with success for commit de194f3.
 Extracted kernel 88886087f8fe4eb85d2cf05ef47a947129ec3a9a416b9088312d16a7e8e072dd.
 Packaged apple-gpu-pt-payload.bin (16730176 bytes) with pinned Tianma touch firmware.
 Built boot-apple-gpu-pt.img (20197376 bytes, SHA256 577be74b5756221bb44bbc7bcbacf572d3cc3258c358a7d514a134e9b0fb8449).
-Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.489s, Booting OKAY 5.093s).
+Booted via fastboot boot to device [redacted] (Sending OKAY 0.489s, Booting OKAY 5.093s).
 Tests CX GDSC power-on, AHB/CXO/GMU clocks, live GMU always-on counter delta, and GX GDSC status.
 Launchd intentionally paused to preserve userdata.
 Power + Volume Down returns to Fastboot.
@@ -55,7 +75,7 @@ both Tianma touch loader and SURYA GPU PAGE TABLE DIAGNOSTIC.
 Packaged research/apple-root-ready/apple-gpu-pt-payload.bin (16730176 bytes) with pinned
 Tianma firmware, and built research/apple-root-ready/boot-apple-gpu-pt.img (20197376 bytes,
 SHA256 724593160914f772166b9ccd47f0413b6973fc4d171bfd819a41ae27971c7820).
-Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.495s, Booting OKAY 5.093s).
+Booted via fastboot boot to device [redacted] (Sending OKAY 0.495s, Booting OKAY 5.093s).
 The diagnostic un-mutes console, verifies 16 KiB private tables and 16,384 translations in XNU RAM,
 and intentionally pauses before launchd so userdata is preserved.
 Power + Volume Down returns to Fastboot.

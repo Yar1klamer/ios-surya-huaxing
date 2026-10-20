@@ -40,6 +40,7 @@ c_src = (ROOT / "graphics/native/surya_gpu_pt.c").read_bytes()
 
 # The xnu-side paths (relative to xnu source tree)
 h_diff = make_new_file_diff("bsd/dev/surya_gpu_pt.h", h_src)
+protocol_diff = make_new_file_diff("bsd/dev/surya_gmu_protocol.h", (ROOT / "graphics/native/surya_gmu_protocol.h").read_bytes())
 c_diff = make_new_file_diff("bsd/dev/surya_gpu_pt.c", c_src)
 
 # bsd/conf/files modification: add surya_gpu_pt.c entry
@@ -73,7 +74,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  #endif
 """
 
-patch = h_diff + c_diff + files_mod + bsd_init_mod
+patch = h_diff + protocol_diff + c_diff + files_mod + bsd_init_mod
 
 out = ROOT / "xnu/patches/0092-surya-private-gpu-page-tables.patch"
 out.write_bytes(patch.encode("utf-8"))

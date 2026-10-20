@@ -118,3 +118,23 @@ leave it off. A pass means CPU-side table construction/allocation works; it
 is not GPU execution or a hardware SMMU walk.
 
 Descriptor reference: <https://github.com/torvalds/linux/blob/v6.12/drivers/iommu/io-pgtable-arm.c>
+
+## A618 OOB bring-up correction
+
+The hardware diagnostic now also attempts GPUCC/GMU bring-up. It is no longer
+limited to offline tables. The default GUI profile still leaves it disabled.
+A615-family (including A618) boot/slumber is request **6**: HOST2GMU bit22,
+GMU2HOST ACK bit30, HOST2GMU release bit30. CM3 fault is bit15; bit23 alone
+must not be called a firmware fault or a boot acknowledgement. Tests exercise
+every individual status bit and require a fault to override an ACK.
+
+Reference: [Xiaomi's GMU driver](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/surya-q-oss/drivers/gpu/msm/adreno_a6xx_gmu.c),
+[request enum](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/surya-q-oss/drivers/gpu/msm/kgsl_gmu_core.h),
+[IRQ masks](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/surya-q-oss/drivers/gpu/msm/kgsl_hfi.h).
+
+The firmware upload is checked word for word while CM3 is in reset. The
+transaction captures status before clearing its ACK, and stops GX writes after
+an unsuccessful handshake. Existing GX/MX indices1/1 are diagnostic inputs,
+not verified operating points: the stock driver derives these from RPMh
+command-database voltage dependency tables. A successful handshake still does
+not prove a GPU command, SMMU walk, Vulkan rendering, or Metal support.

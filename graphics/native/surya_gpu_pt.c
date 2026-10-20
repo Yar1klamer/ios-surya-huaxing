@@ -8,6 +8,7 @@
 #include <pexpert/pexpert.h>
 #include <pexpert/device_tree.h>
 #include "surya_gpu_pt.h"
+#include "surya_gmu_protocol.h"
 
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
@@ -93,6 +94,8 @@ struct surya_gpu_diag_state {
     uint32_t c1, c2, cm3_cfg, cm3_reset, hfi_ver;
     bool fw_found, itcm_loaded, pdc_ok, oob_ok;
     uint32_t fw_size, itcm_check, cm3_init_res, oob_ack;
+    uint32_t oob_before, oob_raw, fw_busy, rpmh_state, hfi_status;
+    int fw_result;
     uint32_t gx_init, gx_on, gx_clk;
     uint32_t rbbm_status, rbbm_status3, gbif_qos;
     bool gx_powered;
@@ -166,12 +169,21 @@ static int
 surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
     struct surya_gpu_diag_state *st)
 {
+    /* Hold CM3 reset during upload and readback. */
+    sgpu_wr(gmu, 0x14000, 1u);
+    delay(10);
     /* Copy firmware words to ITCM (0x3000) */
     unsigned int fw_words = fw_len / 4;
     for (unsigned i = 0; i < fw_words; ++i) {
         uint32_t val;
         memcpy(&val, (const char *)fw_bytes + i * 4, 4);
         sgpu_wr(gmu, 0x3000 + i * 4, val);
+    }
+    /* Check every copied word, not just the first diagnostic word. */
+    for (unsigned i = 0; i < fw_words; ++i) {
+        uint32_t expected;
+        memcpy(&expected, (const char *)fw_bytes + i * 4, 4);
+        if (sgpu_rd(gmu, 0x3000 + i * 4) != expected) return 2;
     }
     st->itcm_loaded = true;
     st->itcm_check = sgpu_rd(gmu, 0x3000);
@@ -224,33 +236,40 @@ surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
 
     if (st->cm3_init_res != 0xBABEFACEu) return 1;
 
-    /* Clear interrupts after GMU boot */
-    sgpu_wr(gmu, 0x14644, 0xFFFFFFFFu);
-    delay(10);
+    /* A618 is in the A615 family. Boot/slumber is request 6, not 2:
+     * HOST2GMU set bit22, GMU2HOST ACK bit30, HOST2GMU release bit30.
+     * Leave unrelated status/fault bits intact for the diagnostic. */
+    st->oob_before = sgpu_rd(gmu, 0x14648);
+    if (st->oob_before & SGMU_CM3_FAULT) {
+        st->oob_ack = st->oob_before;
+        return 3;
+    }
+    sgpu_wr(gmu, 0x14644, SGMU_BOOT_ACK);
 
-    /* GMU FW is up! Request GFX rail power via OOB boot slumber */
-    sgpu_wr(gmu, 0x8FE0, 0u); /* A6XX_GMU_BOOT_SLUMBER_OPTION (0 = OOB_BOOT_OPTION) */
-    sgpu_wr(gmu, 0x8FE4, 1u); /* A6XX_GMU_GX_VOTE_IDX (OPP 1 = active low voltage) */
-    sgpu_wr(gmu, 0x8FE8, 1u); /* A6XX_GMU_MX_VOTE_IDX (OPP 1 = active memory voltage) */
+    sgpu_wr(gmu, 0x8FE0, 0u); /* OOB_BOOT_OPTION */
+    /* Existing diagnostic rail indices; not a derived RPMh voltage table.
+     * Do not infer frequency/voltage or full power readiness from these. */
+    sgpu_wr(gmu, 0x8FE4, 1u);
+    sgpu_wr(gmu, 0x8FE8, 1u);
+    sgpu_wr(gmu, 0x14650, SGMU_BOOT_SET);
 
-    /* Trigger OOB boot slumber: bit 18 in HOST2GMU_INTR_SET */
-    sgpu_wr(gmu, 0x14650, 1u << 18);
-
-    /* Poll for ACK: bit 26 or bit 18 in GMU2HOST_INTR_INFO */
-    for (unsigned i = 0; i < 50000; ++i) {
+    enum sgmu_reply reply = SGMU_PENDING;
+    for (unsigned i = 0; i < 10000; ++i) { /* stock 100-ms bound */
         st->oob_ack = sgpu_rd(gmu, 0x14648);
-        if (st->oob_ack & ((1u << 26) | (1u << 18))) {
-            st->oob_ok = true;
-            break;
-        }
+        reply = sgmu_boot_reply(st->oob_ack);
+        if (reply != SGMU_PENDING) break;
         delay(10);
     }
-
-    /* Clear OOB interrupt */
-    if (st->oob_ok) {
-        sgpu_wr(gmu, 0x14650, 1u << 26); /* a6xx_gmu_oob_clear */
-        sgpu_wr(gmu, 0x14644, 0xFFFFFFFFu);
-    }
+    /* Capture before acknowledgement/release can change the evidence. */
+    st->oob_raw = sgpu_rd(gmu, 0x14658);
+    st->fw_busy = sgpu_rd(gmu, 0x14068);
+    st->rpmh_state = sgpu_rd(gmu, 0x143b0);
+    st->hfi_status = sgpu_rd(gmu, 0x14600);
+    st->oob_ok = reply == SGMU_ACKNOWLEDGED;
+    sgpu_wr(gmu, 0x14644, SGMU_BOOT_ACK);
+    sgpu_wr(gmu, 0x14650, SGMU_BOOT_RELEASE);
+    if (reply == SGMU_FAULT) return 3;
+    if (!st->oob_ok) return 4;
 
     return 0;
 }
@@ -326,12 +345,19 @@ surya_gpu_power_check(struct surya_gpu_diag_state *st)
         if (pdc_cfg && pdc_seq) {
             surya_gpu_setup_pdc(gmu, pdc_cfg, pdc_seq);
             st->pdc_ok = true;
-            surya_gmu_boot(gmu, gmu_fw, gmu_fw_size, st);
+            st->fw_result = surya_gmu_boot(gmu, gmu_fw, gmu_fw_size, st);
         }
     }
 
     /* Read initial GX GDSC state (0x100c) */
     st->gx_init = sgpu_rd(gpucc, 0x100c);
+
+    /* Do not force GX clocks/domain after a failed GMU transaction. */
+    if (!st->oob_ok) {
+        st->gx_on = st->gx_init;
+        st->gx_clk = sgpu_rd(gpucc, 0x1054);
+        return 4;
+    }
 
     /* Enable GX GFX3D root clock (0x1054) */
     sgpu_wr(gpucc, 0x1054, sgpu_rd(gpucc, 0x1054) | 1u);
@@ -387,15 +413,21 @@ surya_gpu_pt_diagnostic(void)
             st.pdc_ok ? "OK" : "NO",
             st.itcm_check, st.cm3_init_res,
             (st.cm3_init_res == 0xBABEFACEu) ? "BABEFACE PASS" : "PENDING/FAIL");
-        if (st.cm3_init_res == 0xBABEFACEu) {
-            printf("SURYA GPU OOB: ACK=%#x (%s)\n", st.oob_ack, st.oob_ok ? "PASS" : "TIMEOUT");
-        }
+        printf("SURYA GPU A618 OOB6: before=%#x status=%#x %s code=%d\n",
+            st.oob_before, st.oob_ack,
+            (st.oob_ack & SGMU_CM3_FAULT) ? "CM3 FAULT" :
+            st.oob_ok ? "ACK bit30" : "NOT ACKNOWLEDGED", st.fw_result);
+        printf("SURYA GPU OOB6: set=%#x ack=%#x raw=%#x busy=%#x\n",
+            SGMU_BOOT_SET, SGMU_BOOT_ACK, st.oob_raw, st.fw_busy);
+        printf("SURYA GPU STATE: RPMH=%#x HFI=%#x upload=%s\n",
+            st.rpmh_state, st.hfi_status, st.itcm_loaded ? "READBACK PASS" : "NOT VERIFIED");
         printf("SURYA GPU GX: GDSC=%#x->%#x (%s) GFXCLK=%#x\n",
             st.gx_init, st.gx_on, st.gx_powered ? "ON" : "OFF", st.gx_clk);
         if (st.gx_powered) {
             printf("SURYA GPU CORE: RBBM_STATUS=%#x STATUS3=%#x GBIF_QOS=%#x\n",
                 st.rbbm_status, st.rbbm_status3, st.gbif_qos);
         }
+        printf("No GPU commands submitted; Metal acceleration not enabled\n");
         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
     }
