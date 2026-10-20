@@ -19,6 +19,15 @@ Booted via fastboot boot to device 9eab9f27 (Sending OKAY 0.489s, Booting OKAY 5
 Tests CX GDSC power-on, AHB/CXO/GMU clocks, live GMU always-on counter delta, and GX GDSC status.
 Launchd intentionally paused to preserve userdata.
 Power + Volume Down returns to Fastboot.
+Owner photo 1db1e6b5 confirms Milestone 2 live hardware pass:
+- Tianma touch loader verified (5 SRAM parts, reset=a0 fw=c2/3d, boot result 0, streaming packets).
+- SURYA GPU PAGE TABLE DIAGNOSTIC: CPU TABLE TEST PASS code=0.
+- SURYA GPU POWER: PASS code=0:
+  CX_GDSC powered up cleanly from 0x222001 (collapsed) to 0xf8222000 (stable PWR_ON).
+  GPU_CC_AHB_CLK enabled and unhalted (0x1).
+  GPU_CC_CX_GMU_CLK enabled with wake/sleep masks (0x4ff1).
+- SURYA GPU GMU: live silicon 19.2 MHz always-on counter c1=1998, c2=213468 (delta=211470 ticks over 10 ms), confirming active silicon clocking.
+- GX_GDSC observed at 0x222001 (collapsed, awaiting GX bring-up).
 
 ## Verified GPU page-table diagnostic boot (2026-10-20)
 
