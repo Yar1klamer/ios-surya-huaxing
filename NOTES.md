@@ -11,6 +11,15 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Full KGSL IOMMU clock dependency correction (2026-10-20)
 
+Commit0f6deeae0017d1d6017c01990b3f66efa8a46e82; CI39487879790 passed.
+Verified kernel SHA256 828a28d420719870f6318a091c7e388eee608a3581743296ed10d84c2d586c85.
+Image research/unixnu-clock-plan-ready/boot-unixnu-smmu.img,20246528 bytes,
+SHA256 a937511eb0dd971d4c499ecbc39c81ffb9b1f0e679294e11a9cd6a1db9a97b9f. Verified CI checksum, ARM64, CLOCK/DT/STEP
+markers, exact payload/firmware/board profile. Owner ready; temporary boot
+accepted Sending0.488s/Booting5.093s exit0. No partition flash.
+Await native DT CLOCK0/1/2 readbacks and last STEP. Physical clock readiness,
+SMMU qualification and GPU execution remain UNVERIFIED.
+
 Owner photo01080287 confirms OOB/GX pass and DT resource output, then stops
 STEP5 first SMMU ID0 read. No SMMU identity/capability/translation pass.
 Audit found our integration used generic arm,smmu node's one-clock list;
