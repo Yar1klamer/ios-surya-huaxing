@@ -17,8 +17,13 @@ Verified image research/unixnu-smmu-ready/boot-unixnu-smmu.img (20246528 bytes),
 SHA256 c16340bfc1b572ac6798d456e0b7425253e8639171e2476dde5e5dc8b2401498.
 Exact embedded payload/SURYA profile/both firmware/ARM64/new marker validated.
 Owner replied ready; temporary fastboot boot accepted exit0 (Sending0.487s,
-Booting5.094s). No partitions flashed. Native screen result PENDING photo of
-SURYA UNIXNU SMMU/ID/CB0/TABLES. Do not infer SMMU qualification from transfer.
+Booting5.094s). No partitions flashed. Owner photo5d09aa5a shows prior CPU
+private-table checks, then debug_log_init: Error!! gPanicBase is still not
+initialized. No SURYA UNIXNU report visible. This is an unresolved boot failure,
+NOT successful SMMU qualification. Source debug.c confirms missing panic buffer
+message, not a page-table initialization error. Added synchronous stage0..11
+breadcrumbs (20ms settle each) around power/clock/SMMU reads/allocation to locate
+first failing operation; no extra SMMU writes or mapping activation.
 Ignored manifest/verifier/boot log in research/unixnu-smmu-ready.
 
 Owner asked to use UniXNU's stack for our GPU. Fetched actual UniXNU

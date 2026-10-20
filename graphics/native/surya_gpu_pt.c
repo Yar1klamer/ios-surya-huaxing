@@ -399,9 +399,12 @@ surya_gpu_pt_diagnostic(void)
     int pt_res = surya_gpu_pt_check();
 
     struct surya_gpu_diag_state st;
+    printf("SURYA UNIXNU STEP 0: private CPU tables passed; start GPU power\n");
+    delay(20000);
     int pwr_res = surya_gpu_power_check(&st);
     struct surya_unixnu_smmu_report unixnu = {0};
     unixnu.code = -1;
+    printf("SURYA UNIXNU POWER RESULT: code=%d OOB=%u GX=%u\n", pwr_res, st.oob_ok, st.gx_powered);
     if (!pt_res && st.oob_ok && st.gx_powered)
         surya_unixnu_smmu_capture(&unixnu);
 

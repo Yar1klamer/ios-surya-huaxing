@@ -363,10 +363,10 @@ index 0000000..118c0bc
 +#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
 new file mode 100644
-index 0000000..131d314
+index 0000000..476a397
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.c
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,136 @@
 +/* SURYA bridge to pinned UniXNU ArmSmmu4K, before live context attachment.
 + * Only the documented GPU MEMNOC clock may be enabled. SMMU registers are
 + * read only; TTBR/SCTLR/streams/TLBs are never written by this diagnostic.
@@ -443,14 +443,20 @@ index 0000000..131d314
 +{
 +    *r = (struct surya_unixnu_smmu_report){0};
 +    r->stage = 1;
++    printf("SURYA UNIXNU STEP 1: map GCC GPU MEMNOC clock\n");
++    delay(20000);
 +    /* MiCode gcc-sm6150.c: gcc_gpu_memnoc_gfx_clk, enable/halt 0x7100c.
 +     * DT provider is GCC at 0x100000; caller already verified CX/GX powered. */
 +    vm_offset_t gcc = ml_io_map(0x171000, 0x1000);
 +    if (!gcc) {r->code = 1; return;}
++    printf("SURYA UNIXNU STEP 2: read MEMNOC branch 0x17100c\n");
++    delay(20000);
 +    r->memnoc_before = read32(gcc, 0xc);
 +    if (r->memnoc_before == UINT32_MAX || r->memnoc_before == 0xdeafbead) {
 +        r->code = 2; return;
 +    }
++    printf("SURYA UNIXNU STEP 3: vote MEMNOC, prior=%#x\n", r->memnoc_before);
++    delay(20000);
 +    __asm__ volatile("dmb oshst" ::: "memory");
 +    *(volatile uint32_t *)(gcc + 0xc) = r->memnoc_before | 1u;
 +    __asm__ volatile("dsb osh" ::: "memory");
@@ -460,20 +466,38 @@ index 0000000..131d314
 +        delay(1);
 +    }
 +    if (r->memnoc_after & (1u << 31)) {r->code = 3; return;}
++    printf("SURYA UNIXNU STEP 4: MEMNOC active=%#x; map SMMU\n", r->memnoc_after);
++    delay(20000);
 +    r->stage = 2;
 +    vm_offset_t smmu = ml_io_map(0x05040000, 0x10000);
 +    if (!smmu) {r->code = 4; return;}
-+    r->id0 = read32(smmu, 0x20); r->id1 = read32(smmu, 0x24);
-+    r->id2 = read32(smmu, 0x28); r->scr0 = read32(smmu, 0);
++    printf("SURYA UNIXNU STEP 5: read ID0 at 0x5040020\n");
++    delay(20000);
++    r->id0 = read32(smmu, 0x20);
++    printf("SURYA UNIXNU STEP 6: ID0=%#x; read ID1\n", r->id0);
++    delay(20000);
++    r->id1 = read32(smmu, 0x24);
++    printf("SURYA UNIXNU STEP 7: ID1=%#x; read ID2\n", r->id1);
++    delay(20000);
++    r->id2 = read32(smmu, 0x28);
++    printf("SURYA UNIXNU STEP 8: ID2=%#x; read SCR0\n", r->id2);
++    delay(20000);
++    r->scr0 = read32(smmu, 0);
 +    if (surya_unixnu_cb0(r->id1, 0x10000, &r->cb_offset)) {
 +        r->code = 5; return;
 +    }
++    printf("SURYA UNIXNU STEP 9: SCR0=%#x; read CB0 off=%#x\n", r->scr0, r->cb_offset);
++    delay(20000);
 +    r->stage = 3;
 +    r->cb_sctlr = read32(smmu, r->cb_offset);
 +    r->cb_fsr = read32(smmu, r->cb_offset + 0x58);
 +    r->cb_tcr = read32(smmu, r->cb_offset + 0x30);
++    printf("SURYA UNIXNU STEP 10: SCTLR=%#x FSR=%#x; read TTBR0\n", r->cb_sctlr, r->cb_fsr);
++    delay(20000);
 +    r->cb_ttbr0 = *(volatile uint64_t *)(smmu + r->cb_offset + 0x20);
 +    __asm__ volatile("dmb oshld" ::: "memory");
++    printf("SURYA UNIXNU STEP 11: CB0 read; build inactive tables\n");
++    delay(20000);
 +    r->stage = 4;
 +    r->code = private_tables(r);
 +    if (!r->code) r->stage = 5;
