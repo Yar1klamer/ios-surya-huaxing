@@ -11,6 +11,16 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## UniXNU component integration (2026-10-20)
 
+Source4638d731eca942fbc6f76e6053fb4db50121e8ae; CI39477736231 passed.
+Verified kernel checksum 0db4b727d942ead10fefa965e8cee56d5fc12f5270ee4f27de75490d31478cdc.
+Verified image research/unixnu-smmu-ready/boot-unixnu-smmu.img (20246528 bytes),
+SHA256 c16340bfc1b572ac6798d456e0b7425253e8639171e2476dde5e5dc8b2401498.
+Exact embedded payload/SURYA profile/both firmware/ARM64/new marker validated.
+Owner replied ready; temporary fastboot boot accepted exit0 (Sending0.487s,
+Booting5.094s). No partitions flashed. Native screen result PENDING photo of
+SURYA UNIXNU SMMU/ID/CB0/TABLES. Do not infer SMMU qualification from transfer.
+Ignored manifest/verifier/boot log in research/unixnu-smmu-ready.
+
 Owner asked to use UniXNU's stack for our GPU. Fetched actual UniXNU
 0597c81b4d571f4706f7bbcf03ca51fe5b6e868b, pinned submodules. Vendored MIT
 ArmSmmu4K4d0d659 (all portable sources/headers/tests) and exact NativeAdrenoABI
