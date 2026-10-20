@@ -16,6 +16,7 @@ p.add_argument('--gui', action='store_true', help='clean GUI boot: mute console 
 p.add_argument('--touch-diagnostic', action='store_true', help='enable touch with visible console diagnostics')
 
 p.add_argument('--touch-firmware', type=Path, help='pinned Poco Tianma controller RAM firmware')
+p.add_argument('--gmu-firmware', type=Path, help='pinned Adreno 618 GMU firmware')
 
 p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before launchd for offline XNU GPU table allocation checks')
 
@@ -32,18 +33,24 @@ cmdline = surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_
 if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt
-if a.touch_firmware:
-    if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic):
-        raise SystemExit('touch firmware requires a touch-enabled boot profile')
-    if b'SURYA TOUCH: loading verified Tianma image' not in kernel:
-        raise SystemExit('kernel lacks the bounded Tianma SRAM loader')
-    fw = surya_touch_firmware.validate(a.touch_firmware.read_bytes())
+if a.touch_firmware or a.gmu_firmware:
     tree, end = adt.parse(a.adt.read_bytes())
     if end != a.adt.stat().st_size:
         raise SystemExit('unexpected trailing ADT bytes')
     chosen = surya.child(tree, 'chosen')
-    surya.setprop(chosen, 'surya-touch-panel', b'tianma\0')
-    surya.setprop(chosen, 'surya-touch-firmware', fw)
+    if a.touch_firmware:
+        if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic):
+            raise SystemExit('touch firmware requires a touch-enabled boot profile')
+        if b'SURYA TOUCH: loading verified Tianma image' not in kernel:
+            raise SystemExit('kernel lacks the bounded Tianma SRAM loader')
+        fw = surya_touch_firmware.validate(a.touch_firmware.read_bytes())
+        surya.setprop(chosen, 'surya-touch-panel', b'tianma\0')
+        surya.setprop(chosen, 'surya-touch-firmware', fw)
+    if a.gmu_firmware:
+        gmu_fw = a.gmu_firmware.read_bytes()
+        if len(gmu_fw) != 32768:
+            raise SystemExit(f'invalid GMU firmware size: {len(gmu_fw)}')
+        surya.setprop(chosen, 'surya-gmu-firmware', gmu_fw)
     adt_path = a.out.with_suffix('.adt')
     adt_path.parent.mkdir(parents=True, exist_ok=True)
     adt_path.write_bytes(adt.serialize(tree))

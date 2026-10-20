@@ -6,6 +6,7 @@
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>
 #include <pexpert/pexpert.h>
+#include <pexpert/device_tree.h>
 #include "surya_gpu_pt.h"
 
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
@@ -13,14 +14,20 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern int hz;
 void surya_gpu_pt_diagnostic(void);
 
-#define SURYA_GPU_PA     0x05000000u
-#define SURYA_GPU_SIZE   0x2000u
+#define SURYA_GPU_PA       0x05000000u
+#define SURYA_GPU_SIZE     0x2000u
 
-#define SURYA_GPUCC_PA   0x05090000u
-#define SURYA_GPUCC_SIZE 0x3000u
+#define SURYA_GPUCC_PA     0x05090000u
+#define SURYA_GPUCC_SIZE   0x3000u
 
-#define SURYA_GMU_PA     0x0506a000u
-#define SURYA_GMU_SIZE   0x20000u
+#define SURYA_GMU_PA       0x0506a000u
+#define SURYA_GMU_SIZE     0x31000u
+
+#define SURYA_PDC_CFG_PA   0x0b290000u
+#define SURYA_PDC_CFG_SIZE 0x10000u
+
+#define SURYA_PDC_SEQ_PA   0x0b490000u
+#define SURYA_PDC_SEQ_SIZE 0x10000u
 
 static inline uint32_t
 sgpu_rd(vm_offset_t base, uint32_t off)
@@ -84,10 +91,170 @@ surya_gpu_pt_check(void)
 struct surya_gpu_diag_state {
     uint32_t cx_init, cx_on, ahb, gmu_clk;
     uint32_t c1, c2, cm3_cfg, cm3_reset, hfi_ver;
+    bool fw_found, itcm_loaded, pdc_ok, rsc_ok, oob_ok;
+    uint32_t fw_size, cm3_init_res, oob_ack;
     uint32_t gx_init, gx_on, gx_clk;
     uint32_t rbbm_status, rbbm_status3, gbif_qos;
     bool gx_powered;
 };
+
+static void
+surya_gpu_setup_pdc(vm_offset_t gmu, vm_offset_t pdc_cfg, vm_offset_t pdc_seq)
+{
+    /* 1. Setup RSCC registers in GMU MMIO window */
+    sgpu_wr(gmu, 0x23010, 1u << 24); /* A6XX_GPU_RSCC_RSC_STATUS0_DRV0 */
+    sgpu_wr(gmu, 0x2302c, 1u);       /* A6XX_RSCC_PDC_SLAVE_ID_DRV0 */
+    sgpu_wr(gmu, 0x23034, 0u);       /* A6XX_RSCC_HIDDEN_TCS_CMD0_ADDR */
+    sgpu_wr(gmu, 0x23038, 0u);       /* A6XX_RSCC_HIDDEN_TCS_CMD0_DATA */
+    sgpu_wr(gmu, 0x2303c, 0u);       /* CMD1 ADDR */
+    sgpu_wr(gmu, 0x23040, 0u);       /* CMD1 DATA */
+    sgpu_wr(gmu, 0x23044, 0u);       /* CMD2 ADDR */
+    sgpu_wr(gmu, 0x23048, 0x80000000u); /* CMD2 DATA */
+    sgpu_wr(gmu, 0x23400, 0u);       /* A6XX_RSCC_OVERRIDE_START_ADDR */
+    sgpu_wr(gmu, 0x23020, 0x4520u);  /* A6XX_RSCC_PDC_SEQ_START_ADDR */
+    sgpu_wr(gmu, 0x23024, 0x4510u);  /* A6XX_RSCC_PDC_MATCH_VALUE_LO */
+    sgpu_wr(gmu, 0x23028, 0x4514u);  /* A6XX_RSCC_PDC_MATCH_VALUE_HI */
+
+    /* RSC sequencer uCode (5 words) */
+    sgpu_wr(gmu, 0x23600, 0xA7A506A0u);
+    sgpu_wr(gmu, 0x23604, 0xA1E6A6E7u);
+    sgpu_wr(gmu, 0x23608, 0xA2E081E1u);
+    sgpu_wr(gmu, 0x2360c, 0xE9A982E2u);
+    sgpu_wr(gmu, 0x23610, 0x0020E8A8u);
+
+    /* 2. PDC SEQ uCode (5 words) */
+    sgpu_wr(pdc_seq, 0x0, 0xFEBEA1E1u);
+    sgpu_wr(pdc_seq, 0x4, 0xA5A4A3A2u);
+    sgpu_wr(pdc_seq, 0x8, 0x8382A6E0u);
+    sgpu_wr(pdc_seq, 0xc, 0xBCE3E284u);
+    sgpu_wr(pdc_seq, 0x10, 0x002081FCu);
+
+    /* 3. PDC CFG TCS1 commands */
+    sgpu_wr(pdc_cfg, 0x55C8, 0u);          /* TCS1_CONTROL */
+    sgpu_wr(pdc_cfg, 0x55CC, 7u);          /* TCS1_CMD_ENABLE_BANK */
+    sgpu_wr(pdc_cfg, 0x55D0, 0u);          /* TCS1_CMD_WAIT_FOR_CMPL_BANK */
+    sgpu_wr(pdc_cfg, 0x55D4, 0x10108u);    /* TCS1_CMD0_MSGID */
+    sgpu_wr(pdc_cfg, 0x55D8, 0x30010u);    /* TCS1_CMD0_ADDR */
+    sgpu_wr(pdc_cfg, 0x55DC, 1u);          /* TCS1_CMD0_DATA */
+    sgpu_wr(pdc_cfg, 0x55E4, 0x10108u);    /* TCS1_CMD1_MSGID */
+    sgpu_wr(pdc_cfg, 0x55E8, 0x30000u);    /* TCS1_CMD1_ADDR */
+    sgpu_wr(pdc_cfg, 0x55EC, 0u);          /* TCS1_CMD1_DATA */
+    sgpu_wr(pdc_cfg, 0x55F4, 0x10108u);    /* TCS1_CMD2_MSGID */
+    sgpu_wr(pdc_cfg, 0x55F8, 0x30090u);    /* TCS1_CMD2_ADDR (A618) */
+    sgpu_wr(pdc_cfg, 0x55FC, 0u);          /* TCS1_CMD2_DATA */
+
+    /* 4. PDC CFG TCS3 commands */
+    sgpu_wr(pdc_cfg, 0x5758, 0u);          /* TCS3_CONTROL */
+    sgpu_wr(pdc_cfg, 0x575C, 7u);          /* TCS3_CMD_ENABLE_BANK */
+    sgpu_wr(pdc_cfg, 0x5760, 0u);          /* TCS3_CMD_WAIT_FOR_CMPL_BANK */
+    sgpu_wr(pdc_cfg, 0x5764, 0x10108u);    /* TCS3_CMD0_MSGID */
+    sgpu_wr(pdc_cfg, 0x5768, 0x30010u);    /* TCS3_CMD0_ADDR */
+    sgpu_wr(pdc_cfg, 0x576C, 2u);          /* TCS3_CMD0_DATA */
+    sgpu_wr(pdc_cfg, 0x5774, 0x10108u);    /* TCS3_CMD1_MSGID */
+    sgpu_wr(pdc_cfg, 0x5778, 0x30000u);    /* TCS3_CMD1_ADDR */
+    sgpu_wr(pdc_cfg, 0x577C, 2u);          /* TCS3_CMD1_DATA (A618) */
+    sgpu_wr(pdc_cfg, 0x5784, 0x10108u);    /* TCS3_CMD2_MSGID */
+    sgpu_wr(pdc_cfg, 0x5788, 0x30090u);    /* TCS3_CMD2_ADDR (A618) */
+    sgpu_wr(pdc_cfg, 0x578C, 3u);          /* TCS3_CMD2_DATA */
+
+    /* 5. Enable PDC */
+    sgpu_wr(pdc_cfg, 0x4520, 0u);          /* PDC_GPU_SEQ_START_ADDR */
+    sgpu_wr(pdc_cfg, 0x4500, 0x80000001u); /* PDC_GPU_ENABLE_PDC */
+}
+
+static int
+surya_gpu_rsc_wake(vm_offset_t gmu)
+{
+    sgpu_wr(gmu, 0x24C1C, 2u); /* A6XX_GMU_RSCC_CONTROL_REQ BIT(1) */
+    for (unsigned i = 0; i < 5000; ++i) {
+        if (sgpu_rd(gmu, 0x24C20) & 2u) break; /* A6XX_GMU_RSCC_CONTROL_ACK */
+        delay(1);
+    }
+    if (!(sgpu_rd(gmu, 0x24C20) & 2u)) return 1;
+
+    for (unsigned i = 0; i < 5000; ++i) {
+        if (!sgpu_rd(gmu, 0x23404)) break; /* A6XX_RSCC_SEQ_BUSY_DRV0 */
+        delay(1);
+    }
+    return 0;
+}
+
+static int
+surya_gmu_boot(vm_offset_t gmu, const uint32_t *fw, unsigned int fw_words,
+    struct surya_gpu_diag_state *st)
+{
+    /* Copy firmware words to ITCM (0x3000) */
+    for (unsigned i = 0; i < fw_words; ++i) {
+        sgpu_wr(gmu, 0x3000 + i * 4, fw[i]);
+    }
+    st->itcm_loaded = true;
+
+    /* TCM retention */
+    sgpu_wr(gmu, 0x14730, 1u); /* A6XX_GMU_GENERAL_7 */
+
+    /* Clear init result */
+    sgpu_wr(gmu, 0x14070, 0u); /* A6XX_GMU_CM3_FW_INIT_RESULT */
+
+    /* TCM boot mode (2) */
+    sgpu_wr(gmu, 0x14004, 2u); /* A6XX_GMU_CM3_BOOT_CONFIG */
+
+    /* AHB fence range */
+    sgpu_wr(gmu, 0x24C44, 0x80A008A0u); /* A6XX_GMU_AHB_FENCE_RANGE_0 */
+
+    /* CM3 config reset value */
+    sgpu_wr(gmu, 0x140B4, 0x4052u); /* A6XX_GMU_CM3_CFG */
+
+    /* Pass chipid for A618 */
+    sgpu_wr(gmu, 0x14608, 0x06010800u); /* A6XX_GMU_HFI_SFR_ADDR */
+
+    /* Configure bus, caches, power */
+    sgpu_wr(gmu, 0x1303C, 1u);         /* A6XX_GMU_SYS_BUS_CONFIG */
+    sgpu_wr(gmu, 0x13000, 1u);         /* A6XX_GMU_ICACHE_CONFIG */
+    sgpu_wr(gmu, 0x13004, 1u);         /* A6XX_GMU_DCACHE_CONFIG */
+    sgpu_wr(gmu, 0x14300, 0x9C40400u); /* A6XX_GMU_PWR_COL_INTER_FRAME_CTRL */
+    sgpu_wr(gmu, 0x143A0, 0x0F11u);    /* A6XX_GMU_RPMH_CTRL */
+
+    /* Clear WFI config */
+    sgpu_wr(gmu, 0x14008, 0u);         /* A6XX_GMU_CX_GMU_WFI_CONFIG */
+
+    /* Pulse CM3 reset */
+    sgpu_wr(gmu, 0x14000, 1u);         /* A6XX_GMU_CM3_SYSRESET */
+    delay(10);
+    sgpu_wr(gmu, 0x14000, 0u);
+
+    /* Poll for 0xBABEFACE */
+    for (unsigned i = 0; i < 50000; ++i) {
+        st->cm3_init_res = sgpu_rd(gmu, 0x14070);
+        if (st->cm3_init_res == 0xBABEFACEu) break;
+        delay(10);
+    }
+
+    if (st->cm3_init_res != 0xBABEFACEu) return 1;
+
+    /* GMU FW is up! Request GFX rail power via OOB boot slumber */
+    sgpu_wr(gmu, 0x8FE0, 0u); /* A6XX_GMU_BOOT_SLUMBER_OPTION (0 = OOB_BOOT_OPTION) */
+    sgpu_wr(gmu, 0x8FE4, 0u); /* A6XX_GMU_GX_VOTE_IDX (OPP 0) */
+
+    /* Trigger OOB boot slumber: bit 18 in HOST2GMU_INTR_SET */
+    sgpu_wr(gmu, 0x14650, 1u << 18);
+
+    /* Poll for ACK: bit 26 in GMU2HOST_INTR_INFO */
+    for (unsigned i = 0; i < 50000; ++i) {
+        st->oob_ack = sgpu_rd(gmu, 0x14648);
+        if (st->oob_ack & (1u << 26)) {
+            st->oob_ok = true;
+            break;
+        }
+        delay(10);
+    }
+
+    /* Clear OOB interrupt */
+    if (st->oob_ok) {
+        sgpu_wr(gmu, 0x14644, 1u << 26);
+    }
+
+    return 0;
+}
 
 static int
 surya_gpu_power_check(struct surya_gpu_diag_state *st)
@@ -142,6 +309,32 @@ surya_gpu_power_check(struct surya_gpu_diag_state *st)
     st->cm3_reset = sgpu_rd(gmu, 0x14000);
     st->hfi_ver = sgpu_rd(gmu, 0x14604);
 
+    /* Check if GMU firmware is provided in ADT */
+    DTEntry chosen = NULL;
+    void const *gmu_fw = NULL;
+    unsigned int gmu_fw_size = 0;
+    if (SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess) {
+        if (SecureDTGetProperty(chosen, "surya-gmu-firmware", &gmu_fw, &gmu_fw_size) == kSuccess &&
+            gmu_fw && gmu_fw_size == 32768) {
+            st->fw_found = true;
+            st->fw_size = gmu_fw_size;
+        }
+    }
+
+    if (st->fw_found) {
+        vm_offset_t pdc_cfg = ml_io_map(SURYA_PDC_CFG_PA, SURYA_PDC_CFG_SIZE);
+        vm_offset_t pdc_seq = ml_io_map(SURYA_PDC_SEQ_PA, SURYA_PDC_SEQ_SIZE);
+        if (pdc_cfg && pdc_seq) {
+            surya_gpu_setup_pdc(gmu, pdc_cfg, pdc_seq);
+            st->pdc_ok = true;
+            int rsc_res = surya_gpu_rsc_wake(gmu);
+            st->rsc_ok = (rsc_res == 0);
+            if (st->rsc_ok) {
+                surya_gmu_boot(gmu, (const uint32_t *)gmu_fw, gmu_fw_size / 4, st);
+            }
+        }
+    }
+
     /* Read initial GX GDSC state (0x100c) */
     st->gx_init = sgpu_rd(gpucc, 0x100c);
 
@@ -192,8 +385,16 @@ surya_gpu_pt_diagnostic(void)
             pt_res ? "FAIL" : "CPU TABLE TEST PASS", pt_res);
         printf("SURYA GPU CX: %s code=%d CX_GDSC=%#x->%#x AHB=%#x GMUCLK=%#x\n",
             pwr_res ? "FAIL" : "PASS", pwr_res, st.cx_init, st.cx_on, st.ahb, st.gmu_clk);
-        printf("SURYA GPU GMU: c1=%u c2=%u delta=%u CM3_CFG=%#x RESET=%#x HFI=%#x\n",
-            st.c1, st.c2, st.c2 - st.c1, st.cm3_cfg, st.cm3_reset, st.hfi_ver);
+        printf("SURYA GPU GMU: c1=%u c2=%u delta=%u CM3_CFG=%#x RESET=%#x\n",
+            st.c1, st.c2, st.c2 - st.c1, st.cm3_cfg, st.cm3_reset);
+        printf("SURYA GPU FW: %s size=%u PDC=%s RSC=%s ITCM=%s INIT=%#x (%s)\n",
+            st.fw_found ? "FOUND" : "NONE", st.fw_size,
+            st.pdc_ok ? "OK" : "NO", st.rsc_ok ? "OK" : "NO",
+            st.itcm_loaded ? "OK" : "NO", st.cm3_init_res,
+            (st.cm3_init_res == 0xBABEFACEu) ? "BABEFACE PASS" : "PENDING/FAIL");
+        if (st.cm3_init_res == 0xBABEFACEu) {
+            printf("SURYA GPU OOB: ACK=%#x (%s)\n", st.oob_ack, st.oob_ok ? "PASS" : "TIMEOUT");
+        }
         printf("SURYA GPU GX: GDSC=%#x->%#x (%s) GFXCLK=%#x\n",
             st.gx_init, st.gx_on, st.gx_powered ? "ON" : "OFF", st.gx_clk);
         if (st.gx_powered) {
