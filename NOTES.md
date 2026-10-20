@@ -28,6 +28,18 @@ SPI failure, readback corruption, exact firmware regions and CRC length setup.
 Pending0087/protocol/fetch-helper files remain untouched/uncommitted.
 Next: CI, package diagnostic with pinned firmware, temporary boot, obtain
 SRAM verify and firmware boot result. Do not infer hardware success from mocks.
+28 host tests/repo validation pass. CI39440263048 PASSED for e508188.
+Verified kernel SHA256c6ce190df531b572f24cc75ac9aa0e4ff4b5c0604df0754fdb1cf953b5ebf912.
+Firmware-bearing ADT roundtrip146488 bytes verified; final payload and embedded
+firmware validated/rehashed byte-for-byte before boot. Archived image
+research/touch-loader-ready/boot-touch-loader.img (20197376 bytes) SHA256
+f69eeab00bfe455330697b29a0b471352f40434b82ce046391b6f1b8983bc6e9.
+Owner replied ready; exactly one Fastboot phone. Temporary boot sent:
+SendingOKAY0.488s BootingOKAY5.093s exit0,total5.593s. No partition flash.
+Await photo after ~25 seconds. Snapshot intentionally holds before launchd;
+look for SRAM part verification, firmware boot result, reset/fw and packets.
+Controller RAM upload not confirmed until actual report. If no upload/error,
+use exact stage/address/error rather than relaxing safety or checksum checks.
 
 ## Novatek event-page correction (2026-10-20)
 
