@@ -4,10 +4,12 @@ Adaptation of [ios-sweet](https://github.com/dipa-studio/ios-sweet), pinned at
 `11da58bd050672960c0a83b5bef2176047eea479`. Target: **Poco X3 NFC (`surya`),
 SM7150 / Snapdragon 732G**. Other Poco X3 variants are not targets.
 
-**Native SURYA XNU boots the RAM disk and runs the static test PID 1.**
-Apple launchd is spawning iOS services from the installed filesystem.
-Repeated xpcproxy/bluetoothd/fairplayd.H2 launches need diagnosis; GUI and
-stable daemon startup remain unproven.
+**Native SURYA XNU boots Apple launchd and has rendered the iOS Lock Screen.**
+The Tianma touchscreen firmware upload and physical touch-down/up events reaching
+HID are verified. Normal GUI gesture testing still needs the owner's result.
+Repeated daemon launches and overall stability still need diagnosis.
+Graphics currently use the CPU; native Adreno Vulkan/Metal acceleration is not
+implemented. See [graphics bring-up and host translation tests](docs/graphics-bringup.md).
 Upstream Redmi Note 10 Pro results belong to that device. Its original
 [README](README.sweet.md) is preserved as reference; its userdata-erasing
 installation steps are not the procedure for this Poco port.

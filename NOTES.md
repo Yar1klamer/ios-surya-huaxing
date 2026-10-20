@@ -9,6 +9,42 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Graphics foundation implemented (2026-10-20)
+
+Owner explicitly requested proceeding with Metal-over-Vulkan. Added captured-DT
+GPU inventory tool and5 synthetic tests: measured chip0x06010800/Adreno618;
+resolved GPU/GMU/GPUCC/SMMU ranges, clock/supply providers and user/secure contexts.
+Report research/gpu-bringup/hardware-inventory.json is ignored; no MMIO/device
+access. Xiaomi source selects a630_sqe.fw,a618_gmu.bin,a615_zap. Inspected Mesa
+25.3.0 tu_knl boundary/KGSL implementation: Linux ioctl,DMA/ION,mmap,sync-file
+assumptions need a real XNU backend. No GPU power,GMU,SMMU,submission or fence
+implementation has been added; no GPU service or success stub advertised.
+
+Built pinned steelbrain/metal2vulkan a2c440b8bcdcf20d34aa1694b61ae22c2a7ea68b
+release CLI under /root/surya-gpu-research/metal2vulkan. Isolated Rust1.98 at
+/root/surya-gpu-tools, no global PATH changes. Added own synthetic AIR-shaped
+copy and triangle fixtures, reproducible tools/check-metal-translation.sh:
+copy and both triangle stages translated and passed independent spirv-val
+Vulkan1.2 checks using generic vk12-floor profile (NOT measured Poco features).
+Each compile <0.02s, ~13MiB maxRSS, under20s and240MiB per-process AS limit.
+This proves selected synthetic compiler paths, not native iOS metallibs.
+
+Added graphics/metal-smoke Rust consumer pinned to same git revision and lock.
+It deliberately selects CPU Vulkan only. Built release and ran on lavapipe/
+llvmpipe LLVM20.1.2: translated kernel dispatched,64 varied uint results matched
+exactly, output initially sentinel-filled. First run0.15s,109128KiB maxRSS.
+Repeat via tools/check-metal-runtime.sh passed; logs/resources/input hashes in
+research/gpu-bringup/runtime, offline SPIRV/metadata in .../offline. Runtime
+notices retained, including non-macOS Metal-level defaults; no iOS16 ABI claim.
+No QEMU/phone commands or graphics changes to working phone were made.
+
+33 Python/C host tests and repository validation passed. Source contract and
+reproduction commands in docs/graphics-bringup.md. Next native milestone remains
+power/GMU/SCM-PAS firmware/SMMU bring-up and bounded real command/fence completion,
+then Turnip backend, then iOS Metal ABI/IOSurface. This work is NOT completed
+Metal support and NOT a rendered/native Vulkan triangle on Poco. Touch GUI
+swipe result still pending. All pre-existing uncommitted touch changes preserved.
+
 ## Metal-over-Vulkan feasibility (2026-10-20)
 
 Owner asks whether Metal can translate to Vulkan. Inspected existing graphics

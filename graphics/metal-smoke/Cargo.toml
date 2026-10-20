@@ -1,0 +1,10 @@
+[package]
+name = "surya-metal-host-smoke"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+publish = false
+
+[dependencies]
+metal2vulkan = { git = "https://github.com/steelbrain/metal2vulkan", rev = "a2c440b8bcdcf20d34aa1694b61ae22c2a7ea68b" }
+metal2vulkan-runtime = { git = "https://github.com/steelbrain/metal2vulkan", rev = "a2c440b8bcdcf20d34aa1694b61ae22c2a7ea68b" }
