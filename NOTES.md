@@ -23,6 +23,19 @@ packet/mask samples. No firmware download implemented or claimed: official
 stock driver downloads touch firmware at boot; reset may have lost it. If new
 report shows no running firmware, next port that loader with correct panel
 image and bounds/checksum verification. Keep pending0087 changes untouched.
+Validation: repository checks/26 host tests and source-based ASAN/UBSAN C
+harness passed (address encoding, reset/version rejection, SPI failures).
+CI39437327227 PASSED for8bf4867. Verified kernel SHA256
+ef5dbe6a69de790e31362f5432538f5359d8e47bd19aacc3bfa97d4a6734abfa.
+Image research/touch-event-ready/boot-touch-event.img SHA256
+68b92529150913e77cb91d6afe93382879b66f724685e1dc0e5a873c3f4f2bad.
+Payload verified byte-for-byte in Android v2 image. Owner replied ready;
+exactly one Fastboot phone, temp boot SendingOKAY0.488s BootingOKAY5.093s,
+exit0,total5.593s. No flash; await event/reset/fw and packet report photo.
+Captured Android bootargs identify Tianma panel. Prepared matching firmware
+from pinned sm7150-mainline/firmware-xiaomi-surya commit locally only;
+research/novatek-stock/firmware-source.json records source/SHA. Validated
+139264-byte binary's15 partition bounds; not uploaded to phone or committed.
 Reference https://github.com/MiCode/Xiaomi_Kernel_OpenSource/tree/surya-q-oss/drivers/input/touchscreen/nt36xxx_spi
 
 ## Touch report visibility (2026-10-20)
