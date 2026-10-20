@@ -9,6 +9,19 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Touch report visibility (2026-10-20)
+
+Owner reports Lock Screen with repeating exec lines and no visible SURYA TOUCH
+messages after 0088. Their absence on-screen does not establish a missed call;
+early messages can scroll away or be overwritten by GUI presentation. Added
+0089: opt-in suryatouchreport=1 pauses before load_init_program, waits 8 seconds
+for the existing touch worker, copies only SURYA TOUCH lines from the in-memory
+console ring into a bounded snapshot, then repeats that report every 5 seconds.
+No GUI/launchd in this diagnostic, no new MMIO operations or disk log writes.
+Normal GUI profile does not enable this pause. Pending protocol changes remain
+untouched and excluded from CI. Next: build, package --touch-diagnostic, temporary
+boot and photograph stable report. Physical touch remains unverified.
+
 ## Touch startup correction (2026-10-20)
 
 Owner reports iOS boots but touch does not respond. Source audit found patch

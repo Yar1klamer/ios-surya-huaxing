@@ -115,6 +115,8 @@ class SuryaTests(unittest.TestCase):
         self.assertEqual(surya.validate_payload(b)['stage'], 'apple-root')
         self.assertIn(b'sweettouch=1', cmd)
         self.assertIn(b'sweetfb_noconsole=0', cmd)
+        self.assertIn(b'suryatouchreport=1', cmd)
+        self.assertNotIn('suryatouchreport', surya.APPLE_GUI_CMDLINE)
         for gated in (b'sweetusb=0', b'sweetkeys=0', b'sweetbattery=0', b'sweetlog=0'):
             self.assertIn(gated, cmd)
         with self.assertRaises(ValueError):

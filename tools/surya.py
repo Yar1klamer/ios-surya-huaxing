@@ -29,7 +29,8 @@ APPLE_GUI_CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -noprogress '
                      'launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30 '
                      'sweettouch=1 sweetkeys=0 sweetusb=0 sweetbattery=0 sweetlog=0')
 # Visible touch bring-up without daemon stderr flooding or console muting.
-APPLE_TOUCH_CMDLINE = APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0')
+APPLE_TOUCH_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
+                       ' suryatouchreport=1')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 

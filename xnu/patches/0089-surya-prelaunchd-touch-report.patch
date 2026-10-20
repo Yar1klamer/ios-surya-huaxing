@@ -1,0 +1,76 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -807,6 +807,58 @@
+ 	return os_atomic_load(&sweet_log_total, relaxed);
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++/* Optional photographable report. Never starts launchd in this mode, never
++ * persists logs, and never submits additional hardware transactions. */
++void surya_touch_boot_report(void);
++void
++surya_touch_boot_report(void)
++{
++	int enabled = 0;
++	static char report[4096];
++	char chunk[1024], line[256];
++	unsigned used = 0, llen = 0;
++	uint64_t pos = 0, end;
++	extern int sweet_console_muted;
++	extern int disableConsoleOutput;
++	(void)PE_parse_boot_argn("suryatouchreport", &enabled, sizeof(enabled));
++	if (enabled != 1) return;
++	/* Give the existing delayed touch worker time to probe. */
++	(void)tsleep(&sweet_log_chan, PZERO, "touchreport", hz * 8);
++	end = sweet_log_position();
++	while (pos < end) {
++		uint32_t n = sweet_log_copy(&pos, chunk,
++		    (uint32_t)MIN((uint64_t)sizeof(chunk), end - pos));
++		if (!n) break;
++		for (uint32_t i = 0; i < n; ++i) {
++			char c = chunk[i];
++			if (c != '\n') {
++				if (llen < sizeof(line) - 1) line[llen++] = c;
++				continue;
++			}
++			line[llen] = 0;
++			if (llen >= 12 && strncmp(line, "SURYA TOUCH:", 12) == 0 &&
++			    used + llen + 1 < sizeof(report)) {
++				memcpy(report + used, line, llen);
++				used += llen;
++				report[used++] = '\n';
++			}
++			llen = 0;
++		}
++	}
++	report[used] = 0;
++	for (;;) {
++		sweet_console_muted = 0;
++		disableConsoleOutput = 0;
++		printf("\nSURYA TOUCH BOOT REPORT - launchd intentionally paused\n");
++		printf("%s", used ? report : "No SURYA TOUCH lines captured; startup not established.\n");
++		printf("Report is an 8-second log snapshot, not proof touch works.\n");
++		printf("Photograph this report. Power + Volume Down returns to Fastboot.\n");
++		(void)tsleep(&sweet_log_chan, PZERO, "touchreport", hz * 5);
++	}
++}
++#endif
++
+ struct sweet_log_header {
+ 	char magic[8];
+ 	uint32_t version, size;
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1102,6 +1102,10 @@
+ 
+ 	bsd_init_kprintf("bsd_do_post - done");
+ 
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	extern void surya_touch_boot_report(void);
++	surya_touch_boot_report();
++#endif
+ 	load_init_program(p);
+ 	lock_trace = 1;
+ }
