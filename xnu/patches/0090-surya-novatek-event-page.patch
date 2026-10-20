@@ -1,0 +1,82 @@
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -997,6 +997,40 @@
+ 	return surya_touch_spi_read(0x4e, trim_out, 6);
+ }
+ 
++/* Xiaomi surya-q-oss nt36xxx_mem_map.h maps masked ID
++ * 0c xx xx 72 66 03 to NT36675_memory_map, EVENT_BUF_ADDR=0x22d00.
++ * nvt_set_page encodes address >> 15 and address >> 7. */
++static int
++surya_nvt_event_page(void)
++{
++	const uint8_t page[3] = {0xff, 0x04, 0x5a};
++	return surya_touch_spi_write(page, sizeof(page));
++}
++
++static int
++surya_nvt_firmware_state(void)
++{
++	uint8_t reset = 0, info[2] = {0, 0};
++	int err = 0;
++	unsigned attempt;
++	for (attempt = 0; attempt < 50; ++attempt) {
++		err = surya_nvt_event_page();
++		if (!err) err = surya_touch_spi_read(0x60, &reset, 1);
++		if (err) break;
++		if (reset >= 0xa0 && reset <= 0xaf) break;
++		surya_touch_wait(10);
++	}
++	if (!err) err = surya_touch_spi_read(0x78, info, sizeof(info));
++	printf("SURYA TOUCH: event=0x22d00 err=%d reset=%02x fw=%02x/%02x\n",
++	    err, reset, info[0], info[1]);
++	if (err) return err;
++	if (reset < 0xa0 || reset > 0xaf || (unsigned)info[0] + info[1] != 255u) {
++		printf("SURYA TOUCH: running firmware not established; firmware loader may be required\n");
++		return EAGAIN;
++	}
++	return 0;
++}
++
+ static void
+ surya_nvt_report(uint32_t mask, const int *x, const int *y)
+ {
+@@ -1036,7 +1070,8 @@
+ 	memset(x, 0, sizeof(x));
+ 	memset(y, 0, sizeof(y));
+ 
+-	err = surya_touch_spi_read(0x00, pts, 65);
++	err = surya_nvt_event_page();
++	if (!err) err = surya_touch_spi_read(0x00, pts, 65);
+ 	if (err) {
+ 		return err;
+ 	}
+@@ -1062,6 +1097,12 @@
+ 			x[fid] = (int)px;
+ 			y[fid] = (int)py;
+ 		}
++	}
++	static unsigned packets_logged;
++	if (packets_logged < 3 || (mask != sst.active && packets_logged < 32)) {
++		printf("SURYA TOUCH: packet=%02x %02x %02x %02x %02x %02x mask=%#x\n",
++		    pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], mask);
++		packets_logged++;
+ 	}
+ 	surya_nvt_report(mask, x, y);
+ 	return 0;
+@@ -1131,7 +1172,13 @@
+ 	    perr, trim[0], trim[1], trim[2], trim[3], trim[4], trim[5],
+ 	    (int)surya_touch_gpio_in(sst.tlmm_n, 9));
+ 
+-	printf("SURYA TOUCH: NT36672C ready, 1080x2400, polling every 10 ms\n");
++	if (perr || trim[0] != 0x0c || trim[3] != 0x72 ||
++	    trim[4] != 0x66 || trim[5] != 0x03) {
++		printf("SURYA TOUCH: unsupported trim; no event memory selected\n");
++		goto out;
++	}
++	if (surya_nvt_firmware_state()) goto out;
++	printf("SURYA TOUCH: firmware ready, 1080x2400, polling every 10 ms\n");
+ 	while (!sst.dead) {
+ 		irq_low = !surya_touch_gpio_in(sst.tlmm_n, 9);
+ 		if (sst.active || irq_low || (++ticks % 10u) == 0) {

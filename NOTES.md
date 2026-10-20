@@ -9,6 +9,22 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Novatek event-page correction (2026-10-20)
+
+Owner photo 6609a184 confirms 0089 report: worker starts; SE0 fw=0x101,
+proto1/status0; trim=0c 00 00 72 66 03, probe err0, IRQ0. This establishes
+SPI chip-ID access, not coordinates or HID delivery. Found committed driver
+leaves chip-ID page selected when polling offset0. Xiaomi official surya-q-oss
+nt36xxx_spi/nt36xxx_mem_map.h matches masked ID0c xx xx 72 66 03 to
+NT36675_memory_map with event0x22d00 (not page0 or NT36672A's0x21c00).
+Added0090: switch to event page, check reset state0xa0..af and complementary
+firmware version before claiming ready, reject unsupported trim, log bounded
+packet/mask samples. No firmware download implemented or claimed: official
+stock driver downloads touch firmware at boot; reset may have lost it. If new
+report shows no running firmware, next port that loader with correct panel
+image and bounds/checksum verification. Keep pending0087 changes untouched.
+Reference https://github.com/MiCode/Xiaomi_Kernel_OpenSource/tree/surya-q-oss/drivers/input/touchscreen/nt36xxx_spi
+
 ## Touch report visibility (2026-10-20)
 
 Owner reports Lock Screen with repeating exec lines and no visible SURYA TOUCH
