@@ -1,0 +1,19 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -721,7 +721,14 @@
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
+ #if defined(ARM64_BOARD_CONFIG_SURYA)
+-	/* The storage probe does not start unrelated board peripherals. */
++	/* Start only the explicitly requested input driver, after storage setup.
++	 * Keep probe-only boots and unrelated board peripherals disabled. */
++	int touch_enabled = 0;
++	(void)PE_parse_boot_argn("sweettouch", &touch_enabled, sizeof(touch_enabled));
++	if (su.writable && touch_enabled == 1) {
++		printf("SURYA TOUCH: starting requested driver after root storage setup\n");
++		sweet_touch_init();
++	}
+ 	return 0;
+ #endif
+ 	sweet_log_start();

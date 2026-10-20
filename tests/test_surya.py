@@ -106,6 +106,20 @@ class SuryaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             surya.validate_payload(bad)
 
+    def test_touch_diagnostic_enables_only_touch_and_visible_console(self):
+        b = payload(apple=True)
+        cmd = surya.APPLE_TOUCH_CMDLINE.encode()
+        self.assertLess(len(cmd), mkpayload.BOOT_LINE_LENGTH)
+        b[0x48:mkpayload.SEG_TABLE] = bytes(mkpayload.SEG_TABLE - 0x48)
+        b[0x48:0x48 + len(cmd)] = cmd
+        self.assertEqual(surya.validate_payload(b)['stage'], 'apple-root')
+        self.assertIn(b'sweettouch=1', cmd)
+        self.assertIn(b'sweetfb_noconsole=0', cmd)
+        for gated in (b'sweetusb=0', b'sweetkeys=0', b'sweetbattery=0', b'sweetlog=0'):
+            self.assertIn(gated, cmd)
+        with self.assertRaises(ValueError):
+            surya.validate_payload(b.replace(b'sweetusb=0', b'sweetusb=1'))
+
     def test_valid_ramdisk_payload(self):
         self.assertEqual(surya.validate_payload(payload())['board'], 'surya')
 
