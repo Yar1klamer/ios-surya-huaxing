@@ -191,18 +191,24 @@ surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
     /* CM3 config reset value */
     sgpu_wr(gmu, 0x140B4, 0x4052u); /* A6XX_GMU_CM3_CFG */
 
-    /* Pass chipid for A618 */
-    sgpu_wr(gmu, 0x14608, 0x06010800u); /* A6XX_GMU_HFI_SFR_ADDR */
+    /* Pass chipid for A618: Core 6, Major 1, Minor 8, Patch 0 -> 0x06018000 */
+    sgpu_wr(gmu, 0x14608, 0x06018000u); /* A6XX_GMU_HFI_SFR_ADDR */
 
     /* Configure bus, caches, power */
     sgpu_wr(gmu, 0x1303C, 1u);         /* A6XX_GMU_SYS_BUS_CONFIG */
     sgpu_wr(gmu, 0x13000, 1u);         /* A6XX_GMU_ICACHE_CONFIG */
     sgpu_wr(gmu, 0x13004, 1u);         /* A6XX_GMU_DCACHE_CONFIG */
     sgpu_wr(gmu, 0x14300, 0x9C40400u); /* A6XX_GMU_PWR_COL_INTER_FRAME_CTRL */
-    sgpu_wr(gmu, 0x143A0, 0x0F11u);    /* A6XX_GMU_RPMH_CTRL */
+    sgpu_wr(gmu, 0x143A0, 0x0F11u);    /* A6XX_GMU_RPMH_CTRL: RPMH_ENABLE_MASK */
 
     /* Clear WFI config */
     sgpu_wr(gmu, 0x14008, 0u);         /* A6XX_GMU_CX_GMU_WFI_CONFIG */
+
+    /* Put AHB fence in ALLOW mode */
+    sgpu_wr(gmu, 0x24C40, 0u);         /* A6XX_GMU_AO_AHB_FENCE_CTRL */
+
+    /* Clear any pending interrupts */
+    sgpu_wr(gmu, 0x14644, 0xFFFFFFFFu); /* A6XX_GMU_GMU2HOST_INTR_CLR */
 
     /* Pulse CM3 reset */
     sgpu_wr(gmu, 0x14000, 1u);         /* A6XX_GMU_CM3_SYSRESET */
@@ -218,17 +224,22 @@ surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
 
     if (st->cm3_init_res != 0xBABEFACEu) return 1;
 
+    /* Clear interrupts after GMU boot */
+    sgpu_wr(gmu, 0x14644, 0xFFFFFFFFu);
+    delay(10);
+
     /* GMU FW is up! Request GFX rail power via OOB boot slumber */
     sgpu_wr(gmu, 0x8FE0, 0u); /* A6XX_GMU_BOOT_SLUMBER_OPTION (0 = OOB_BOOT_OPTION) */
-    sgpu_wr(gmu, 0x8FE4, 0u); /* A6XX_GMU_GX_VOTE_IDX (OPP 0) */
+    sgpu_wr(gmu, 0x8FE4, 1u); /* A6XX_GMU_GX_VOTE_IDX (OPP 1 = active low voltage) */
+    sgpu_wr(gmu, 0x8FE8, 1u); /* A6XX_GMU_MX_VOTE_IDX (OPP 1 = active memory voltage) */
 
     /* Trigger OOB boot slumber: bit 18 in HOST2GMU_INTR_SET */
     sgpu_wr(gmu, 0x14650, 1u << 18);
 
-    /* Poll for ACK: bit 26 in GMU2HOST_INTR_INFO */
+    /* Poll for ACK: bit 26 or bit 18 in GMU2HOST_INTR_INFO */
     for (unsigned i = 0; i < 50000; ++i) {
         st->oob_ack = sgpu_rd(gmu, 0x14648);
-        if (st->oob_ack & (1u << 26)) {
+        if (st->oob_ack & ((1u << 26) | (1u << 18))) {
             st->oob_ok = true;
             break;
         }
@@ -237,7 +248,8 @@ surya_gmu_boot(vm_offset_t gmu, const void *fw_bytes, unsigned int fw_len,
 
     /* Clear OOB interrupt */
     if (st->oob_ok) {
-        sgpu_wr(gmu, 0x14644, 1u << 26);
+        sgpu_wr(gmu, 0x14650, 1u << 26); /* a6xx_gmu_oob_clear */
+        sgpu_wr(gmu, 0x14644, 0xFFFFFFFFu);
     }
 
     return 0;
