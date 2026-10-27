@@ -8,6 +8,14 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-27 — фаза 0: инвентаризация
+- `adb devices` показал устройство `192.168.1.124:5555`: это **Yandex Station Mini 2** (колонка), не Poco. Прочитал только
+  model/compatible/разделы, ничего не тянул и не менял. Poco по adb не подключён.
+- Добавил `tools/pull-surya-inventory.sh`: только чтение; отказывается работать, если DT-модель не surya;
+  складывает DT, прошивки (a630_sqe, a618_gmu, a615_zap, тач, DSP), камерные модули, реестр сенсоров и /proc-информацию
+  в `research/live-surya-android/` (в git не попадает). Запуск: `tools/pull-surya-inventory.sh [SERIAL]`.
+- Ждём: Poco в Android/recovery с root adb (или файлы вручную).
+
 ## 2026-10-27 — план GPU / датчики / камера (черновик, ждёт решения владельца)
 Фазы: 0 инвентаризация железа surya (DT + прошивки из Android) -> 1 SMP/лаги -> 2 GPU (A618) -> 3 датчики -> 4 камера.
 GPU: SQE/ZAP-прошивки -> ringbuffer + CP init (A6xx, не A7xx из UniXNU) -> IRQ/fence -> userclient по образцу
