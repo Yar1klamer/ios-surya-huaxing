@@ -167,7 +167,7 @@ class SuryaTests(unittest.TestCase):
 
     def test_sweet_panic_region_is_not_inherited(self):
         tree = surya.build(0x100000000, 0x20000000, seed=b'0' * 64)
-        self.assertNotIn(b'pram ', [props(n)['name'] for n in tree.children])
+        self.assertNotIn(b'pram\0', [props(n)['name'] for n in tree.children])
         self.assertNotIn('embedded-panic-log-size', [k for k, f, v in surya.child(tree, 'chosen').props])
 
     def test_smp_cpu_count_matches_cmdline(self):
