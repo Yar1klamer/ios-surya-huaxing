@@ -78,6 +78,11 @@ def build(base, size, *, seed=None, qemu=False, product=None, storage=None, appl
     setprop(chosen, 'firmware-version', mkadt.cstr('surya-shim'))
     setprop(chosen, 'system-firmware-version', mkadt.cstr('surya-shim'))
     setprop(chosen, 'unique-chip-id', mkadt.u64(0x5355525941000001))
+    # Upstream mkadt carves a panic-log region at sweet's DRAM top (/pram, embedded-panic-log-size).
+    # Those addresses are not this phone's RAM; keep the previously booted SURYA behaviour until a
+    # panic region is measured and placed inside the validated SURYA range.
+    root.children = [n for n in root.children if n.name != 'pram']
+    chosen.props = [(k, f, v) for k, f, v in chosen.props if k != 'embedded-panic-log-size']
     # SM7150 shares sweet's MPIDR layout (Aff1 = core, 0-5 A55, 6-7 A76); the
     # default stays one boot CPU until SMP is observed on this phone. The kernel
     # also needs a matching cpus=N boot argument (see with_cpus).

@@ -8,6 +8,13 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-27 — слияние форка
+- Влит `origin/main` (10a8f7a): сайт, LICENSE, upstream-правка `mkadt.py` (лог паники `/pram` + `embedded-panic-log-size`).
+- Эта правка кладёт `/pram` по адресам sweet (DRAM-верх 0xb0000000+...), а не по RAM surya. В `surya.py` узел и свойство
+  убраны, как в ранее загружавшихся образцах; тест `test_sweet_panic_region_is_not_inherited`. 60 тестов OK.
+- TODO (гипотеза): если на surya снова будет `gPanicBase is still not initialized`, отмерить область и поставить её
+  внутрь проверяемого диапазона RAM surya (учесть контракт base/size в `validate_payload`).
+
 ## 2026-10-27 — фаза 0: инвентаризация
 - `adb devices` показал устройство `192.168.1.124:5555`: это **Yandex Station Mini 2** (колонка), не Poco. Прочитал только
   model/compatible/разделы, ничего не тянул и не менял. Poco по adb не подключён.
