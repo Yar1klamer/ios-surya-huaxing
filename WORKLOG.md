@@ -8,6 +8,32 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — фаза 0 выполнена (Poco в recovery, adb 5d1eea87)
+**Наблюдения** (данные в `research/live-surya-android/`, в git не идут)
+- Телефон: POCO X3 NFC, vendor Android 12 MIUI 14 (surya_eea), recovery fox_surya. Динамические разделы целы (`super`=sda15).
+- Рядом в adb висит чужое устройство 192.168.1.124 (раньше колонка, теперь Nexus 4): не трогаю, скрипт работает по серийнику.
+- Скрипт `pull-surya-inventory.sh`: DT (18816 файлов), разделы, /proc/iomem, interrupts. Починил: проверка по `ro.product.device`
+  (в recovery DT-модель общая "IDP"), `MSYS_NO_PATHCONV` (Git Bash ломал /vendor), NUL-байт в `tr`.
+- /vendor в recovery пуст: смонтировал вручную **только на чтение** (loop `-r` на sda15 со смещением из `lpdump`;
+  OFFSET считать на ПК: в toybox `$((...))` переполняется) в `/mnt/vend_ro`, `modem`(sde4, vfat)->`/mnt/modem_ro`,
+  `dsp`(sde9)->`/mnt/dsp_ro`. Ничего не записано. Потом `losetup -d /dev/block/loop0` и umount, либо перезагрузка.
+- **CPU: подтверждено.** DT: 8 ядер, `reg` = 0x000..0x700 (Aff1 = номер ядра), enable-method psci, метод `smc`,
+  ядра 0–5 A55, 6–7 A76 (CPU part 0x805 у части). RAM: 0x80000000+2 GiB и 0x100000000+0xfcc00000 — как у sweet.
+  => `--cpus 6/8` имеет смысл проверять на железе.
+- **GPU-прошивки получены:** a630_sqe.fw, a618_gmu.bin, a615_zap.{b00,b01,b02,mdt}; плюс тач Novatek (huaxing/tianma),
+  haptic (aw8624/drv2624), CAMERA_ICP.elf, adsp/cdsp/venus из modem/image.
+- **Датчики:** в DT surya нет датчиков на I2C/SPI основного процессора. Список Android: accel, gyro, mag, ambient_light,
+  proximity, sar, pedometer, tilt, pickup, sig_motion, device_orient, rotv/game_rv/geomag_rv, gravity. Конфиги SSC:
+  lsm6dso (accel/gyro, также варианты bmi220/bmi26x/icm4x6xx), ak0991 (магнитометр), stk3a5x (свет/приближение, варианты
+  huaxing/tianma под панель), adux1050 (SAR). HAL = `sensors.ssc.so`. Т.е. датчики за SSC на **ADSP** (SM7150 без SLPI) ->
+  нужен путь через ADSP (remoteproc/glink/QMI sns), прямого I2C-драйвера не будет. Какая именно микросхема стоит
+  на этом экземпляре — по registry/sensors_list (сверить).
+- **Камеры:** cam-sensor@0..6 на CCI `ac4a000`. Модули Android: IMX682 (64 МП, ofilm/sunny), HI1337 (ultra), HI259 (macro,
+  ofilm/aac), OV02B1B / GC02M1B (depth), S5K3T2 (front, ofilm/sunny). Файлы sensormodule/tuned/.so в `camera/`.
+  Какие реально установлены — по DT-узлам cam-sensor и по probe (не проверено).
+
+**Следующее:** SMP (сборка в Actions) и GPU G1–G3. Датчики/камера — после.
+
 ## 2026-10-27 — слияние форка
 - Влит `origin/main` (10a8f7a): сайт, LICENSE, upstream-правка `mkadt.py` (лог паники `/pram` + `embedded-panic-log-size`).
 - Эта правка кладёт `/pram` по адресам sweet (DRAM-верх 0xb0000000+...), а не по RAM surya. В `surya.py` узел и свойство

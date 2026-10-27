@@ -4,15 +4,18 @@
 # the files are the vendor's and the DT holds the serial number). Run with the phone in
 # Android or a recovery with root adb. Usage: tools/pull-surya-inventory.sh [ADB_SERIAL]
 set -u
+# Git Bash would rewrite /vendor/... into C:/Program Files/Git/vendor/...
+export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"
 cd "$(dirname "$0")/.."
 OUT=research/live-surya-android
 ADB=(adb)
 [ $# -ge 1 ] && ADB=(adb -s "$1")
 
 # Refuse any device that is not a surya: other adb devices on the network are not ours.
-model=$("${ADB[@]}" shell 'cat /proc/device-tree/model 2>/dev/null; cat /proc/device-tree/compatible 2>/dev/null | tr "\0" " "' | tr -d '\r')
+model=$("${ADB[@]}" shell 'cat /proc/device-tree/model 2>/dev/null; echo; tr "\0" " " < /proc/device-tree/compatible 2>/dev/null; echo; getprop ro.product.device 2>/dev/null; getprop ro.product.model 2>/dev/null' | tr -d '\0')
+# Recovery kernels may expose a generic SoC DT ("IDP"), so ro.product.device also counts.
 case "$model" in
-	*surya*|*SURYA*|*"POCO X3"*|*"Poco X3"*) ;;
+	*surya*|*SURYA*|*"POCO X3"*|*"Poco X3"*|*POCO_X3*) ;;
 	*) echo "pull-surya-inventory.sh: not a surya (got: $model). Pass the phone's serial as argument." >&2; exit 1 ;;
 esac
 echo "device: $model"
