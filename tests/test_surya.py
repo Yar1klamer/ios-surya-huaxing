@@ -165,6 +165,15 @@ class SuryaTests(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 surya.validate_payload(b)
 
+    def test_smp_cpu_count_matches_cmdline(self):
+        for n in (1, 6, 8):
+            tree = surya.build(0x100000000, 0x20000000, seed=b'0' * 64, cpus=n)
+            self.assertEqual(len(surya.child(tree, 'cpus').children), n)
+        with self.assertRaises(ValueError):
+            surya.build(0x100000000, 0x20000000, seed=b'0' * 64, cpus=9)
+        self.assertIn('cpus=6', surya.with_cpus(surya.CMDLINE, 6))
+        self.assertEqual(surya.with_cpus(surya.CMDLINE, 1), surya.CMDLINE)
+
     def test_upstream_sweet_still_selects_sweet(self):
         root = mkadt.build(seed=b'0' * 64, product_path=None)
         self.assertIn(b'xiaomi,sweet', props(root)['compatible'].split(b'\0'))

@@ -20,6 +20,8 @@ p.add_argument('--gmu-firmware', type=Path, help='pinned Adreno 618 GMU firmware
 
 p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before launchd for offline XNU GPU table allocation checks')
 
+p.add_argument('--cpus', type=int, default=1, help='boot CPU count (1..8); must equal the ADT CPU node count (surya.py --cpus)')
+
 a = p.parse_args()
 if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic)) > 1:
     raise SystemExit('select only one boot profile')
@@ -30,6 +32,7 @@ m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
 cmdline = surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
+cmdline = surya.with_cpus(cmdline, a.cpus)
 if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt

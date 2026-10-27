@@ -7,6 +7,7 @@ This produces an ADT, not a complete iOS installation or boot image.
 import argparse
 import hashlib
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -56,8 +57,15 @@ def validate_memory(base, size):
         raise ValueError('RAM overlaps the boot framebuffer')
 
 
-def build(base, size, *, seed=None, qemu=False, product=None, storage=None, apple_root=False):
+def with_cpus(cmdline, cpus):
+    """Return cmdline with its cpus=N argument set (kernel patches 0065/0078 accept 1..8)."""
+    return re.sub(r'\bcpus=\d+', f'cpus={cpus}', cmdline, count=1)
+
+
+def build(base, size, *, seed=None, qemu=False, product=None, storage=None, apple_root=False, cpus=1):
     validate_memory(base, size)
+    if not 1 <= cpus <= 8:
+        raise ValueError('cpus must be 1..8 (cores 0-5 A55, 6-7 A76)')
     if apple_root and (not storage or not product or size < 0x80000000):
         raise ValueError('Apple root requires storage proof, product ADT and >=2 GiB RAM')
     root = mkadt.build(seed=seed, qemu=qemu, product_path=None)
@@ -70,8 +78,10 @@ def build(base, size, *, seed=None, qemu=False, product=None, storage=None, appl
     setprop(chosen, 'firmware-version', mkadt.cstr('surya-shim'))
     setprop(chosen, 'system-firmware-version', mkadt.cstr('surya-shim'))
     setprop(chosen, 'unique-chip-id', mkadt.u64(0x5355525941000001))
-    # The exact MPIDR topology is not yet verified on this device. One boot CPU.
-    child(root, 'cpus').children = child(root, 'cpus').children[:1]
+    # SM7150 shares sweet's MPIDR layout (Aff1 = core, 0-5 A55, 6-7 A76); the
+    # default stays one boot CPU until SMP is observed on this phone. The kernel
+    # also needs a matching cpus=N boot argument (see with_cpus).
+    child(root, 'cpus').children = child(root, 'cpus').children[:cpus]
     root.children = [n for n in root.children
                      if dict((k, v) for k, f, v in n.props)['name'] != b'sweet-ufs\0']
     if storage is not None:
@@ -152,8 +162,12 @@ def validate_payload(blob):
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
     allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE) if apple_root else (CMDLINE,)
-    if cmd not in allowed_cmdlines:
+    # Only the cpus=N value may differ, and it must match the ADT's CPU nodes.
+    m_cpus = re.search(r'\bcpus=(\d+)', cmd)
+    if m_cpus is None or with_cpus(cmd, 1) not in allowed_cmdlines:
         raise ValueError('command line does not match the SURYA boot profile')
+    if int(m_cpus.group(1)) != len(child(root, 'cpus').children):
+        raise ValueError('cpus= boot argument does not match the ADT CPU nodes')
     touch_chosen = child(root, 'chosen')
     firmware = touch_chosen.prop('surya-touch-firmware')
     if firmware is not None:
@@ -201,19 +215,20 @@ def main():
     p.add_argument('--product-adt', type=Path)
     p.add_argument('--apple-root', action='store_true', help='prepare bounded writable Apple root profile; do not boot before approved installation')
     p.add_argument('--qemu', action='store_true')
+    p.add_argument('--cpus', type=int, default=1, help='CPU nodes in the ADT (1..8); pass the same value to mksurya-apple-root.py --cpus')
     p.add_argument('--storage-evidence', type=Path, help='live Poco controller evidence; read-only probe only')
     a = p.parse_args()
     if not a.memory_evidence.is_file():
         p.error('--memory-evidence must name an existing local source file')
     storage = json.loads(a.storage_evidence.read_text(encoding='utf-8')) if a.storage_evidence else None
-    root = build(a.dram_base, a.dram_size, qemu=a.qemu, product=a.product_adt, storage=storage, apple_root=a.apple_root)
+    root = build(a.dram_base, a.dram_size, qemu=a.qemu, product=a.product_adt, storage=storage, apple_root=a.apple_root, cpus=a.cpus)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_bytes(adt.serialize(root))
     a.out.with_suffix('.json').write_text(json.dumps(dict(board='surya', upstream=UPSTREAM,
         memory_evidence=str(a.memory_evidence.resolve()),
         memory_evidence_sha256=hashlib.sha256(a.memory_evidence.read_bytes()).hexdigest(),
         memory_verified_on_device=False,
-        kernel_target='SURYA', qemu=a.qemu, command_line=APPLE_CMDLINE if a.apple_root else CMDLINE,
+        kernel_target='SURYA', qemu=a.qemu, command_line=with_cpus(APPLE_CMDLINE if a.apple_root else CMDLINE, a.cpus), cpus=a.cpus,
         apple_root=a.apple_root,
         storage_probe=bool(storage),
         storage_evidence_sha256=hashlib.sha256(a.storage_evidence.read_bytes()).hexdigest() if storage else None,
