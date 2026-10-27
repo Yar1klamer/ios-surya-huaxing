@@ -8,6 +8,15 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-27 — план GPU / датчики / камера (черновик, ждёт решения владельца)
+Фазы: 0 инвентаризация железа surya (DT + прошивки из Android) -> 1 SMP/лаги -> 2 GPU (A618) -> 3 датчики -> 4 камера.
+GPU: SQE/ZAP-прошивки -> ringbuffer + CP init (A6xx, не A7xx из UniXNU) -> IRQ/fence -> userclient по образцу
+HakiosGPUUserClient -> Mesa freedreno (a618 поддерживается) -> GLES-композитинг вместо CPU-рендера -> DVFS через GMU.
+Датчики: выяснить по DT, на AP-шине или за SLPI/SSC; если SLPI — remoteproc+glink/qrtr по образцу hakios.adsp.c;
+публикация как IOHIDEvent (accel/gyro/ALS/proximity) для CoreMotion.
+Камера: по образцу hakios.camera.c (CCI, PM-регуляторы, MCLK, CSIPHY, CSID/IFE) + software ISP; iOS-сторона (AVCapture) не изучена.
+Всё непроверено на железе; детали — в ответе владельцу в чате.
+
 ## 2026-10-27 — старт, анализ
 **Наблюдения**
 - Репо клонировано; последний коммит `d8281fa` (SMMUv2 CB0 + Stream 0).
