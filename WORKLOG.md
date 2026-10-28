@@ -123,7 +123,7 @@
   sha256 afefb95a...; `boot-smp6.img` (чистый GUI, консоль выключена) sha256 983312d5....
 - Ожидаем в логе: `SWEET CPU: cpu=N mpidr=0x.. came alive; SGI1 OK` для cpu 0..5. НЕ загружено на телефон, результат неизвестен.
 
-## 2026-10-28 — фаза 0 выполнена (Poco в recovery, adb 5d1eea87)
+## 2026-10-28 — фаза 0 выполнена (Poco в recovery, adb, серийник не записываем)
 **Наблюдения** (данные в `research/live-surya-android/`, в git не идут)
 - Телефон: POCO X3 NFC, vendor Android 12 MIUI 14 (surya_eea), recovery fox_surya. Динамические разделы целы (`super`=sda15).
 - Рядом в adb висит чужое устройство 192.168.1.124 (раньше колонка, теперь Nexus 4): не трогаю, скрипт работает по серийнику.
