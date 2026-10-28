@@ -1,0 +1,62 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -470,7 +470,9 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 			__asm__ volatile("dsb osh" ::: "memory");
+ 			const uint32_t s2 = *(volatile uint32_t *)(smmu + 0xc00 + 4 * next);
+ 			const uint32_t smr = *(volatile uint32_t *)(smmu + 0x800 + 4 * next);
+-			printf("SURYA CORE2: extra stream %#x on group %u: SMR wrote %#x read %#x S2CR %#x\n", more[m], next, want, smr, s2);
++			r->extra[m].id = more[m];
++			r->extra[m].smr = smr;
++			r->extra[m].s2cr = s2;
+ 			if (s2 == 0 && smr == want) {
+ 				took++;
+ 				next++;
+@@ -479,7 +481,7 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 				__asm__ volatile("dsb osh" ::: "memory");
+ 			}
+ 		}
+-		printf("SURYA CORE2: %u extra streams attached\n", took);
++		r->extra_took = took;
+ 		delay(20000);
+ 	}
+ 
+@@ -505,6 +507,10 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	delay(20000);
+ 	r->status_start = core_rd(gpu, RBBM_STATUS);
+ 	printf("SURYA CORE: RBBM_STATUS %#x\n", r->status_start);
++	r->pre_cp_int = core_rd(gpu, CP_INTERRUPT_STATUS);
++	r->pre_hw_fault = core_rd(gpu, CP_HW_FAULT);
++	r->pre_int0 = core_rd(gpu, RBBM_INT_0_STATUS);
++	printf("SURYA CORE: before any command CP_INT %#x HW_FAULT %#x INT0 %#x\n", r->pre_cp_int, r->pre_hw_fault, r->pre_int0);
+ 	delay(20000);
+ 	printf("SURYA CORE: CP_ME_INIT: write pointer to %u\n", n);
+ 	delay(20000);
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -55,6 +55,10 @@ struct surya_gpu_core_report {
+ 	uint32_t rptr, wptr;            /* the ring after CP_ME_INIT */
+ 	uint32_t status_cp, int0, hw_fault, cp_int;
+ 	uint32_t sqe_word0, sqe_word1;  /* first words of the microcode as the GPU-visible buffer holds them */
++	/* 0109: the CP's error state 5 ms after the start, before the ring is fed; the extra user streams as attached */
++	uint32_t pre_cp_int, pre_hw_fault, pre_int0;
++	unsigned extra_took;
++	struct { uint32_t id, smr, s2cr; } extra[3];
+ };
+ 
+ struct surya_unixnu_smmu_report;
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -517,6 +517,10 @@ surya_gpu_pt_diagnostic(void)
+                     core.tries[i].wrote, core.tries[i].read, core.tries[i].s2cr);
+             printf("SURYA CORE2: 5 ms after the CP start (no command yet): FSR=%#x FAR=%#llx RBBM_STATUS=%#x\n", core.fsr_start,
+                 core.far_start, core.status_start);
++            printf("SURYA CORE2: before any command CP_INT=%#x HW_FAULT=%#x INT0=%#x; %u extra user streams attached\n",
++                core.pre_cp_int, core.pre_hw_fault, core.pre_int0, core.extra_took);
++            for (unsigned i = 0; i < 3; i++)
++                printf("SURYA CORE2: extra stream %#x: SMR %#x S2CR %#x\n", core.extra[i].id, core.extra[i].smr, core.extra[i].s2cr);
+             printf("SURYA CORE2: fault syndrome FSYNR0=%#x FSYNR1=%#x GFSR=%#x; shadow rptr word %#x; catch page: %u dwords changed\n",
+                 core.cb_fsynr0, core.cb_fsynr1, core.gfsr_end, core.scratch0, core.catch_hits);
+             for (unsigned i = 0; i < core.catch_hits && i < SURYA_CORE_CATCH; i++)

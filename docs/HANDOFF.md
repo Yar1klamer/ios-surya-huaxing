@@ -96,7 +96,7 @@
 
 ## 2. Ядро: патчи XNU и сборка
 
-### 2.1 Серия патчей `xnu/patches/` (108 штук, строго подряд 0001…0108, файлы в **LF**; `.gitattributes`/`eol=lf`)
+### 2.1 Серия патчей `xnu/patches/` (109 штук, строго подряд 0001…0109, файлы в **LF**; `.gitattributes`/`eol=lf`)
 - 0001–0081: порт ios-sweet (машинная конфигурация, фреймбуфер-консоль, свои драйверы UFS/touch/keys/HID, AMFI-/sandbox-заглушки, USB, SMP 0065/0078 и т. д.).
 - 0082–0093: адаптация под surya (RAM-disk цель, чтение UFS, bounded Apple root 0086, Novatek-тач по SPI 0087–0091, диагностика таблиц GPU 0092, SMMU/ArmSmmu4K 0093).
   **0093 генерируется** `tools/gen_unixnu_smmu_patch.py` из вендорного `graphics/vendor/unixnu` (тест сверяет генератор с файлом — не править 0093 руками).

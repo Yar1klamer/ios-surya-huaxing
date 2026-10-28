@@ -251,3 +251,19 @@ class GpuCoreAllUserStreamsTests(unittest.TestCase):
     def test_progress_is_printed_between_the_cp_start_and_each_read(self):
         order = [self.src.index(m) for m in ('CP_SQE_CNTL written', 'reading the SMMU fault registers', 'reading RBBM_STATUS', 'RBBM_STATUS %#x')]
         self.assertEqual(order, sorted(order))
+
+
+class GpuCorePreRingErrorStateTests(unittest.TestCase):
+    """0109: CP_INT/HW_FAULT/INT0 read after the CP start and before the ring is fed (0108 saw CP_INT=0x80, ILLEGAL_INSTR)."""
+
+    def setUp(self):
+        text = (ROOT / 'xnu/patches/0109-surya-gpu-core-pre-ring-error-state.patch').read_text(encoding='utf-8')
+        self.src = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+    def test_error_registers_are_read_before_the_write_pointer_is_written(self):
+        self.assertIn('r->pre_cp_int = core_rd(gpu, CP_INTERRUPT_STATUS);', self.src)
+        self.assertIn('r->pre_hw_fault = core_rd(gpu, CP_HW_FAULT);', self.src)
+
+    def test_extra_streams_reach_the_final_report(self):
+        self.assertIn('extra user streams attached', self.src)
+        self.assertIn('SURYA CORE2: extra stream %#x: SMR %#x S2CR %#x', self.src)
