@@ -8,6 +8,16 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — G3a ВЫПОЛНЕН: 34 записи в регистры ядра 3D прошли (наблюдение, фото владельца; `boot-mac-gpu-core1.img`, ядро собрано локально на Mac, 118c1fcc...)
+- `SURYA CORE: RAN stage=1/1 wrote=34 same=29 differ=5 RBBM_STATUS 0x1->0xc00001`. Ни зависания, ни перезагрузки: запись в регистры GPU при включённом GX проходит (как у Linux a6xx_hw_init).
+- Пять регистров читаются иначе, чем записаны (не отказы): `RBBM_GBIF_HALT`@0x58 пишется 0, читается `0xdeafbead` (тот же маркер, что у `GBIF_QOS`@0x44: у A618 по этому смещению регистра нет или он не читается; запись безвредна),
+  `RBBM_PERFCTR_GPU_BUSY_MASKED`@0x142c 0xffffffff -> 0x2f7fff (маска битов), `UCHE_GMEM_RANGE_MAX`@0x3834 0x17ffff -> 0x17f000 (выравнивание), `CP_ROQ_THRESHOLDS_2`@0x2308 -> 0 (вероятно write-only),
+  `UCHE_CLIENT_PF`@0x3864 0x81 -> 0x1 (бит 7 не хранится).
+- `RBBM_STATUS` после записей 0xc00001 (новые биты 22 и 23; смысл не расшифрован, гипотеза — признаки занятости блоков), поведение GPU не нарушено.
+- Следующее — G3b: привязка потока 0 к CB0 (с обходом строгой проверки S2CR), таблицы под SQE/кольцо, `CP_SQE_INSTR_BASE`, `CP_RB_*`, `CP_SQE_CNTL=1`, `CP_ME_INIT`. GPU VA ограничен 4 ГБ (в каталоге Linux у A618 `ADRENO_QUIRK_4GB_VA`).
+- Коммиты теперь пушатся с Mac (`git push fork main`, osxkeychain настроен владельцем).
+
+
 ## 2026-10-28 — G3: разбор последовательности (docs/gpu-plan.md, раздел «G3 — конкретика»)
 - Из Linux `a6xx_hw_init` выделен минимум для первой команды GPU и все смещения регистров A6xx (байтовые, из `a6xx.xml`); коды CP: ME_INIT 0x48, MEM_WRITE 0x3d, SET_SECURE_MODE 0x66.
 - План проверок: G3a (регистры), G3b (SMMU+SQE+кольцо+CP_ME_INIT), G3c (zap остаётся, SET_SECURE_MODE, MEM_WRITE). Сборка ядра теперь локальная (хакинтош).
