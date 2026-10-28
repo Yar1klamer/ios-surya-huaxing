@@ -8,6 +8,13 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — РЕЗУЛЬТАТ ПАТЧА 0108 (`boot-mac-gpu-core2g.img`): CP НА ЭТОТ РАЗ НЕ СБРОСИЛ ТЕЛЕФОН, но ловит «недопустимую инструкцию» (наблюдение, фото владельца)
+- Отчёт дошёл до конца (`Launchd intentionally paused`), перезагрузки в момент запуска CP не было (в 0107 была). Позже телефон «перезагрузился сам» (когда именно — не уточнено).
+- `SURYA CORE2: CP ring rptr=0 wptr=9 NOT CAUGHT UP RBBM_STATUS=0x800005 INT0=0 HW_FAULT=0 CP_INT=0x80`, `FSR=0x400 FAR=0 FSYNR=0 GFSR=0`, ловушка и shadow-rptr не тронуты, микрокод в буфере `0x16ee19a 0x1001ee1`.
+- **Новое: `CP_INT=0x80` = бит 7 `CP_ILLEGAL_INSTR_ERROR`** (по `a6xx.xml`: 0 OPCODE_ERROR, 1 UCODE_ERROR, 2 HW_FAULT, 4 REGISTER_PROTECTION, 5 AHB_ERROR, 6 VSD_PARITY, 7 ILLEGAL_INSTR). CP выполняет микрокод и спотыкается о недопустимую инструкцию, rptr остаётся 0.
+- Строк `extra stream …` на фото не видно (ушли за экран); в 0109 они переносятся в итоговый отчёт. Была ли причиной сброса в 0107 непривязанность потоков 1/0x400/0x401 — НЕ доказано (возможно, сброс был случайным или от иного).
+- Гипотезы про `ILLEGAL_INSTR` (не проверены): (1) микрокод попадает в SQE искажённым (кэш/атрибуты памяти для чтения GPU через SMMU); (2) ошибка рождается уже при старте SQE, до всякого пакета в кольце; (3) ошибка от самого пакета `CP_ME_INIT`. Различитель: прочитать `CP_INTERRUPT_STATUS/HW_FAULT/INT0` через 5 мс после старта, ДО записи WPTR (0109).
+
 ## 2026-10-28 — образ `boot-mac-gpu-core2g.img` собран (патч 0108; ядро 22:47, sha256 0d61e941…; образ sha256 a1e64e92…)
 - Профиль `gpu-core2`; телефон в fastboot, ждёт «грузи». Смотреть: строки `extra stream …`, `N extra streams attached`, и ПОСЛЕДНЮЮ напечатанную строку перед возможной перезагрузкой (`CP_SQE_CNTL written` / `reading the SMMU fault registers` / `reading RBBM_STATUS` / `RBBM_STATUS …`).
 
