@@ -1,0 +1,61 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -451,6 +451,38 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 		return;
+ 	}
+ 
++	/* the DT's "0x0 0x401" also covers ids 1, 0x400 and 0x401, and a mask is dropped here: attach those with exact entries on
++	 * other groups, so no stream of the GPU's user context is left unmatched (an unmatched stream is a bus error) */
++	{
++		const uint32_t more[3] = { 1u, 0x400u, 0x401u };
++		unsigned next = 0, took = 0;
++		for (unsigned m = 0; m < 3; m++) {
++			while (next < slots && (int)next == r->attach_slot) {
++				next++;
++			}
++			if (next >= slots) {
++				break;
++			}
++			const uint32_t want = (1u << 31) | more[m];
++			*(volatile uint32_t *)(smmu + 0xc00 + 4 * next) = 0;
++			__asm__ volatile("dsb osh" ::: "memory");
++			*(volatile uint32_t *)(smmu + 0x800 + 4 * next) = want;
++			__asm__ volatile("dsb osh" ::: "memory");
++			const uint32_t s2 = *(volatile uint32_t *)(smmu + 0xc00 + 4 * next);
++			const uint32_t smr = *(volatile uint32_t *)(smmu + 0x800 + 4 * next);
++			printf("SURYA CORE2: extra stream %#x on group %u: SMR wrote %#x read %#x S2CR %#x\n", more[m], next, want, smr, s2);
++			if (s2 == 0 && smr == want) {
++				took++;
++				next++;
++			} else {
++				*(volatile uint32_t *)(smmu + 0x800 + 4 * next) = 0;
++				__asm__ volatile("dsb osh" ::: "memory");
++			}
++		}
++		printf("SURYA CORE2: %u extra streams attached\n", took);
++		delay(20000);
++	}
++
+ 	/* the command processor: addresses, then start, then CP_ME_INIT */
+ 	printf("SURYA CORE: giving the CP the microcode at %#llx and the ring at %#llx\n", G3_IOVA + G3_SQE_OFF,
+ 	    G3_IOVA + G3_RING_OFF);
+@@ -462,11 +494,18 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	printf("SURYA CORE: starting the command processor (CP_SQE_CNTL)\n");
+ 	delay(20000);
+ 	core_wr(gpu, CP_SQE_CNTL, 1);
++	printf("SURYA CORE: CP_SQE_CNTL written; waiting 5 ms\n");
+ 	delay(5000);            /* before any command: does the CP touch memory at start-up alone? */
++	printf("SURYA CORE: reading the SMMU fault registers\n");
++	delay(20000);
+ 	r->fsr_start = *(volatile uint32_t *)(smmu + u->cb_offset + 0x58);
+ 	r->far_start = *(volatile uint32_t *)(smmu + u->cb_offset + 0x60) |
+ 	    ((uint64_t)*(volatile uint32_t *)(smmu + u->cb_offset + 0x64) << 32);
++	printf("SURYA CORE: reading RBBM_STATUS (FSR %#x)\n", r->fsr_start);
++	delay(20000);
+ 	r->status_start = core_rd(gpu, RBBM_STATUS);
++	printf("SURYA CORE: RBBM_STATUS %#x\n", r->status_start);
++	delay(20000);
+ 	printf("SURYA CORE: CP_ME_INIT: write pointer to %u\n", n);
+ 	delay(20000);
+ 	core_wr(gpu, CP_RB_WPTR, n);

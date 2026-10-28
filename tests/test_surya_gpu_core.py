@@ -234,3 +234,20 @@ class GpuCoreSqeBaseRegisterTests(unittest.TestCase):
         self.assertEqual(0x830 * 4, 0x20c0)
         self.assertIn('-#define CP_SQE_INSTR_BASE 0x2058u', self.text)
         self.assertIn('+#define CP_SQE_INSTR_BASE 0x20c0u', self.text)
+
+
+class GpuCoreAllUserStreamsTests(unittest.TestCase):
+    """0108: ids 1, 0x400, 0x401 attached with exact SMR entries (a mask is dropped); progress printed around the CP start."""
+
+    def setUp(self):
+        text = (ROOT / 'xnu/patches/0108-surya-gpu-core-all-user-streams-and-progress.patch').read_text(encoding='utf-8')
+        self.src = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+    def test_exact_entries_for_the_other_user_stream_ids(self):
+        self.assertIn('{ 1u, 0x400u, 0x401u }', self.src)
+        self.assertIn('(1u << 31) | more[m]', self.src)
+        self.assertNotIn('<< 16', self.src)
+
+    def test_progress_is_printed_between_the_cp_start_and_each_read(self):
+        order = [self.src.index(m) for m in ('CP_SQE_CNTL written', 'reading the SMMU fault registers', 'reading RBBM_STATUS', 'RBBM_STATUS %#x')]
+        self.assertEqual(order, sorted(order))
