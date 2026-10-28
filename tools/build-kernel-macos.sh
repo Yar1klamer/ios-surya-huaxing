@@ -1,6 +1,8 @@
 #!/bin/bash
 # Local build of the SURYA XNU kernel on macOS: the same steps as .github/workflows/xnu.yml, without GitHub.
-# Needs Xcode 15.x (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks) and Homebrew.
+# Needs Xcode 15.x (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks). Homebrew is NOT needed (it no longer
+# supports Intel Macs): jq is part of macOS 15, cmake and ninja come from pip, xcodes/gum are stubbed (build.sh only checks
+# that they exist). Installing the Kernel Debug Kit asks for the administrator password (sudo installer): run this in a Terminal.
 # NOT yet run on the owner's machine: the first run is a trial, send the output if it stops.
 # Usage: tools/build-kernel-macos.sh            full build (clean work tree each time)
 #        XCODE=/Applications/Xcode_15.4.app tools/build-kernel-macos.sh
@@ -17,7 +19,9 @@ export MAKEFLAGS=${MAKEFLAGS:--k}                        # keep going: one run s
 WORK=${WORK:-$HOME/surya-xnu-build}
 
 [ "$(uname)" = Darwin ] || { echo "build-kernel-macos.sh: this runs on macOS only" >&2; exit 1; }
-command -v brew >/dev/null || { echo "Homebrew is missing: install it from https://brew.sh first" >&2; exit 1; }
+for t in git curl patch python3 jq; do
+	command -v "$t" >/dev/null || { echo "build-kernel-macos.sh: $t is missing" >&2; exit 1; }
+done
 
 # Xcode 15.x, not the newest one.
 if [ -z "${XCODE:-}" ]; then
@@ -33,12 +37,21 @@ case "$XCVER" in
 esac
 xcrun --find iig >/dev/null
 
-brew install jq gum bash cmake ninja >/dev/null
-# build.sh only checks that "xcodes" exists (Xcode is already installed): a stub in a private directory, no sudo.
+# build.sh only checks that "xcodes" and "gum" exist (Xcode is already installed, the version is given): stubs in a private directory.
 mkdir -p "$WORK/bin"
-printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/xcodes"
-chmod +x "$WORK/bin/xcodes"
-export PATH="$WORK/bin:$(brew --prefix)/bin:$PATH"
+for stub in xcodes gum; do
+	printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/$stub"
+	chmod +x "$WORK/bin/$stub"
+done
+# cmake and ninja from pip (python wheels carry the binaries, also for Intel Macs), no Homebrew and no sudo.
+if ! command -v cmake >/dev/null || ! command -v ninja >/dev/null; then
+	[ -x "$WORK/venv/bin/python" ] || python3 -m venv "$WORK/venv"
+	"$WORK/venv/bin/python" -m pip install -q cmake ninja
+fi
+export SURYA_EXTRA_PATH="$WORK/bin:$WORK/venv/bin"
+export PATH="$SURYA_EXTRA_PATH:$PATH"
+cmake --version | head -1
+ninja --version
 
 # The build project, pinned, with our patches next to blacktop's.
 rm -rf "$WORK/dxb"
@@ -49,6 +62,9 @@ cp "$REPO"/xnu/patches/*.patch "$REPO"/xnu/patches/*.sh "$WORK/dxb/patches/"
 # libfirehose_kernel is built arm64e-only; the SURYA kernel is plain arm64
 sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' "$WORK/dxb/build.sh"
 grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' "$WORK/dxb/build.sh"
+# build.sh rebuilds PATH from Xcode, the system and /usr/local/bin only: keep our stubs and pip tools reachable too
+sed -i '' 's|${SYSTEM_PATHS}${HOMEBREW_PATHS}"|${SYSTEM_PATHS}${HOMEBREW_PATHS}:${SURYA_EXTRA_PATH}"|' "$WORK/dxb/build.sh"
+grep -c 'SURYA_EXTRA_PATH' "$WORK/dxb/build.sh"
 
 (cd "$WORK/dxb" && bash build.sh) || echo "build.sh ended with errors: the kernel may still have been produced, see below" >&2
 

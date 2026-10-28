@@ -8,9 +8,11 @@
    https://developer.apple.com/download/all/ (бесплатный Apple ID, вход выполняет владелец), распаковать, переместить в «Программы»,
    запустить один раз и принять лицензию: `sudo xcodebuild -license accept`. На macOS 15 Xcode 15.4 официально не заявлен,
    обычно запускается; если нет — писать, подберём вариант.
-2. **Homebrew** (команда с https://brew.sh).
-3. Инструменты: `brew install git python3 android-platform-tools` (adb/fastboot).
-4. **Репозиторий**: `git clone https://github.com/Yar1klamer/ios-surya-huaxing && cd ios-surya-huaxing`.
+2. **Homebrew не нужен** (он больше не поддерживает Intel-Маки). `jq` есть в macOS 15, `cmake` и `ninja` скрипт ставит сам через `pip` в
+   свою папку, `fastboot`/`adb` берутся из Google platform-tools (на этом Mac они в `~/platform-tools`).
+3. Нужны только `git` и `python3` (уже есть). Установка Kernel Debug Kit при первой сборке просит пароль администратора (`sudo installer`):
+   запускайте скрипт сборки в Терминале.
+4. **Репозиторий**: `git clone https://github.com/Yar1klamer/ios-surya-huaxing && cd ios-surya-huaxing` (если папка уже есть от оригинального `arbuxiktech/ios-surya`: `git remote add fork https://github.com/Yar1klamer/ios-surya-huaxing.git && git fetch fork && git merge --ff-only fork/main`, пуш — `git push fork main`).
    Для `git push` авторизоваться в GitHub самому (ваши данные; токен, выданный раньше для Windows-сессии, сюда не переносить).
 5. **Комплект файлов** (то, чего нет в git: прошивки с телефона, shim, ADT, stock DTB, mkbootimg), 0,9 МБ:
    `scp burmalda@192.168.1.112:macos-bundle.tgz .` (или с флешки, `research/macos-bundle.tgz` на Windows), затем
