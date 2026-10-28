@@ -8,6 +8,15 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — G2 ВЫПОЛНЕН: TrustZone авторизовал zap-шейдер GPU (наблюдение, фото владельца; `boot-gpu-zap.img`, ядро CI 40656..., 8901f79, профиль `--gpu-zap-diagnostic`)
+- `SURYA ZAP: RAN stage=8 code=0 answer=0 header=6860 code=1984 region 0->0x16ff021` и `TRUSTZONE AUTHENTICATED THE ZAP SHADER; given back: yes`.
+  Все пять вызовов (SHUTDOWN, INIT_IMAGE, MEM_SETUP, копия b02 в gpu_region@97715000, AUTH_AND_RESET, SHUTDOWN) вернули 0; зарезервированная память до записи 0, после — первое слово кода (0x016ff021), запись прошла.
+- Телефон не перезагрузился; питание/GMU/OOB6/GX как раньше; `GBIF_QOS=0xdeafbead` по-прежнему (смещение 0x44, вероятно, не GBIF A6xx — проверить по a6xx.xml).
+- НЕ проверено: что ядро 3D выходит из secure mode с этим шейдером (виден только при работающем CP, G3). В конце шейдер возвращён TZ (SHUTDOWN) — для G3 держать авторизованным.
+- SMMU `stage=4 code=50` (привязка потока, `S2CR0=0x200ff`) осталась; нужен обход строгой проверки до G3.
+- Следующее — G3: привязка потока 0 к CB0, таблицы на кольцо/микрокод SQE, A6xx hw_init (регистры по Linux a6xx_gpu.c/a6xx.xml), CP_ME_INIT, CP_MEM_WRITE. Много итераций сборки ядра: хакинтош владельца (macOS 15, нужен Xcode 15.x) и `tools/build-kernel-macos.sh` (не проверен).
+
+
 ## 2026-10-28 — G2-подготовка: TrustZone отвечает (наблюдение, фото владельца; `boot-gpu-tz.img`, ядро CI 40655366573, 5f29310)
 - `SURYA TZ: TrustZone ANSWERS (smc 64-bit, code 0); PAS init-image 1, auth-and-reset 1`: TZ слушает вызовы нашего ядра и имеет оба вызова для проверки/запуска образа.
 - `supported` = 0/0 для audio, modem, video **и** GPU: вопрос ничего не говорит (телефон модем/аудио точно стартует через PAS), как и предупреждал HakiOS. Не признак отказа для GPU.
