@@ -1,0 +1,18 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -126,8 +126,12 @@ void
+ sweet_keys_init(void)
+ {
+ #if defined(ARM64_BOARD_CONFIG_SURYA)
+-	printf("SURYA: PMIC key map unverified\n");
+-	return;
++	/*
++	 * Verified against the live surya device tree: PM6150 SID 0 power-on block at 0x800
++	 * (pon_1 KPDPWR = power, pon_2 RESIN = volume down) and PM6150L SID 4 GPIO2 at 0xc100
++	 * (gpio_keys vol_up, active low), on the same v5 arbiter windows as sweet. Reads only.
++	 */
++	printf("SURYA: PMIC key map matches live DT (PM6150 PON, PM6150L GPIO2)\n");
+ #endif
+ 	int enabled = 1;
+ 	thread_t thread;

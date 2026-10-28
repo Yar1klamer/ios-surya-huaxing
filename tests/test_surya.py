@@ -4,7 +4,8 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
 import adt
 import mkadt
 import mkpayload
@@ -117,10 +118,20 @@ class SuryaTests(unittest.TestCase):
         self.assertIn(b'sweetfb_noconsole=0', cmd)
         self.assertIn(b'suryatouchreport=1', cmd)
         self.assertNotIn('suryatouchreport', surya.APPLE_GUI_CMDLINE)
-        for gated in (b'sweetusb=0', b'sweetkeys=0', b'sweetbattery=0', b'sweetlog=0'):
+        for gated in (b'sweetusb=0', b'sweetbattery=0', b'sweetlog=0'):
             self.assertIn(gated, cmd)
         with self.assertRaises(ValueError):
             surya.validate_payload(b.replace(b'sweetusb=0', b'sweetusb=1'))
+
+    def test_gui_profiles_enable_pmic_keys_only_with_touch(self):
+        # patch 0094: the read-only PMIC key poller runs in the touch-enabled profiles
+        for cmd in (surya.APPLE_GUI_CMDLINE, surya.APPLE_TOUCH_CMDLINE, surya.APPLE_GPU_PT_CMDLINE):
+            self.assertIn('sweetkeys=1', cmd)
+            self.assertIn('sweettouch=1', cmd)
+        for cmd in (surya.CMDLINE, surya.APPLE_CMDLINE, surya.APPLE_DIAGNOSTIC_CMDLINE):
+            self.assertIn('sweetkeys=0', cmd)
+        self.assertIn('SURYA: PMIC key map matches live DT',
+                      (ROOT / 'xnu/patches/0094-surya-pmic-keys.patch').read_text())
 
     def test_gpu_table_profile_preserves_root_and_other_gates(self):
         b = payload(apple=True)
