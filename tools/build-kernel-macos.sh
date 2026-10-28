@@ -72,7 +72,7 @@ OUT="$REPO/research/kernel-local"
 mkdir -p "$OUT"
 cp -R "$WORK/dxb/fakeroot/System/Library/Kernels/." "$OUT/" 2>/dev/null || true
 if ls "$OUT"/kernel.* >/dev/null 2>&1; then
-	(cd "$OUT" && shasum -a 256 kernel.* | tee SHA256SUMS)
+	(cd "$OUT" && for f in kernel.*; do [ -f "$f" ] && shasum -a 256 "$f"; done | tee SHA256SUMS)
 	echo "done: $OUT"
 else
 	echo "no kernel was produced: send the log above" >&2
