@@ -96,7 +96,7 @@
 
 ## 2. Ядро: патчи XNU и сборка
 
-### 2.1 Серия патчей `xnu/patches/` (103 штуки, строго подряд 0001…0103, файлы в **LF**; `.gitattributes`/`eol=lf`)
+### 2.1 Серия патчей `xnu/patches/` (107 штук, строго подряд 0001…0107, файлы в **LF**; `.gitattributes`/`eol=lf`)
 - 0001–0081: порт ios-sweet (машинная конфигурация, фреймбуфер-консоль, свои драйверы UFS/touch/keys/HID, AMFI-/sandbox-заглушки, USB, SMP 0065/0078 и т. д.).
 - 0082–0093: адаптация под surya (RAM-disk цель, чтение UFS, bounded Apple root 0086, Novatek-тач по SPI 0087–0091, диагностика таблиц GPU 0092, SMMU/ArmSmmu4K 0093).
   **0093 генерируется** `tools/gen_unixnu_smmu_patch.py` из вендорного `graphics/vendor/unixnu` (тест сверяет генератор с файлом — не править 0093 руками).
@@ -215,7 +215,7 @@
 `*_ADDR_MODE_CNTL`: CP `0x2108`, VSC `0x3004`, GRAS `0x21804`, RB `0x23814`, PC `0x27804`, HLSQ `0x2f814`, VFD `0x29804`, VPC `0x25804`, UCHE `0x3800`, SP `0x2b804`, TPL1 `0x2d804`, `RBBM_SECVID_TSB 0x3e040`;
 `RBBM_VBIF_CLIENT_QOS_CNTL 0x40`, `RBBM_PERFCTR_GPU_BUSY_MASKED 0x142c`, `RBBM_PERFCTR_CNTL 0x1400`, `RBBM_INTERFACE_HANG_INT_CNTL 0x7c`; UCHE: `WRITE_RANGE_MAX 0x3814`, `TRAP_BASE 0x3824`, `WRITE_THRU_BASE 0x381c`,
 `GMEM_RANGE_MIN 0x382c`, `GMEM_RANGE_MAX 0x3834`, `FILTER_CNTL 0x3860`, `CACHE_WAYS 0x385c`, `CLIENT_PF 0x3864`; CP: `ROQ_THRESHOLDS_1/2 0x2304/0x2308`, `MEM_POOL_SIZE 0x230c`, `AHB_CNTL 0x2634`,
-`PC_DBG_ECO_CNTL 0x27800`; запуск CP: `CP_RB_BASE 0x2000` (64), `CP_RB_CNTL 0x2008`, `CP_RB_RPTR_ADDR 0x2010` (64), `CP_RB_RPTR 0x2018`, `CP_RB_WPTR 0x201c`, `CP_SQE_CNTL 0x2020`, `CP_SQE_INSTR_BASE 0x2058` (64),
+`PC_DBG_ECO_CNTL 0x27800`; запуск CP: `CP_RB_BASE 0x2000` (64), `CP_RB_CNTL 0x2008`, `CP_RB_RPTR_ADDR 0x2010` (64), `CP_RB_RPTR 0x2018`, `CP_RB_WPTR 0x201c`, `CP_SQE_CNTL 0x2020`, `CP_SQE_INSTR_BASE 0x20c0` (ИСПРАВЛЕНО в 0107: 0x2058 — это A8XX) (64),
 `CP_HW_FAULT 0x2084`, `CP_INTERRUPT_STATUS 0x208c`, `CP_SQE_UCODE_DBG_ADDR 0x2440`, `RBBM_SECVID_TRUST_CNTL 0x3d000` (секурный, без zap не трогать).
 Значение `CP_RB_CNTL`: `12 | (2<<8) | (1<<27)` = `0x0800020c` (размер кольца 32 КиБ → BUFSZ=log2(32К/8)=12, BLKSZ=log2(32/8)=2, NO_UPDATE без shadow-указателя).
 Пакеты: `PKT7(opcode, count) = (7<<28) | count | parity(count)<<15 | (opcode&0x7f)<<16 | parity(opcode)<<23`, `parity` — `PM4_PARITY` из Linux; `CP_ME_INIT`=0x48 с 8 словами

@@ -1,0 +1,12 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -159,7 +159,7 @@ stage1(vm_offset_t gpu, struct surya_gpu_core_report *r)
+ #define CP_RB_RPTR      0x2018u
+ #define CP_RB_WPTR      0x201cu
+ #define CP_SQE_CNTL     0x2020u
+-#define CP_SQE_INSTR_BASE 0x2058u
++#define CP_SQE_INSTR_BASE 0x20c0u
+ #define CP_HW_FAULT     0x2084u
+ #define CP_INTERRUPT_STATUS 0x208cu
+ #define RBBM_INT_0_STATUS 0x804u

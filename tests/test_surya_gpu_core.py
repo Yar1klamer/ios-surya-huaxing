@@ -23,7 +23,7 @@ LINUX = {
     'RBBM_INTERFACE_HANG_INT_CNTL': 0x7c, 'UCHE_CLIENT_PF': 0x3864,
 }
 # The command processor's own start-up registers: stage 1 must not touch them.
-CP_START = {0x2000, 0x2008, 0x2010, 0x201c, 0x2020, 0x2058, 0x3d000}
+CP_START = {0x2000, 0x2008, 0x2010, 0x201c, 0x2020, 0x20c0, 0x3d000}
 
 
 def added():
@@ -89,7 +89,7 @@ class GpuCoreStage2Tests(unittest.TestCase):
 
     def test_cp_registers_are_linuxs_offsets(self):
         for name, off in (('CP_RB_BASE', 0x2000), ('CP_RB_CNTL', 0x2008), ('CP_RB_RPTR', 0x2018), ('CP_RB_WPTR', 0x201c),
-                          ('CP_SQE_CNTL', 0x2020), ('CP_SQE_INSTR_BASE', 0x2058), ('CP_HW_FAULT', 0x2084),
+                          ('CP_SQE_CNTL', 0x2020), ('CP_HW_FAULT', 0x2084),
                           ('CP_INTERRUPT_STATUS', 0x208c), ('RBBM_INT_0_STATUS', 0x804), ('RBBM_STATUS', 0x840)):
             self.assertRegex(self.src, r'#define %s\s+%#x' % (name, off), name)
 
@@ -222,3 +222,15 @@ class GpuCoreCatchPageTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GpuCoreSqeBaseRegisterTests(unittest.TestCase):
+    """0107: CP_SQE_INSTR_BASE is dword 0x830 (byte 0x20c0) on A6xx (mesa a6xx.xml); 0x2058 is the A8XX register."""
+
+    def setUp(self):
+        self.text = (ROOT / 'xnu/patches/0107-surya-gpu-core-sqe-base-register.patch').read_text(encoding='utf-8')
+
+    def test_register_moved_from_a8xx_offset_to_a6xx_offset(self):
+        self.assertEqual(0x830 * 4, 0x20c0)
+        self.assertIn('-#define CP_SQE_INSTR_BASE 0x2058u', self.text)
+        self.assertIn('+#define CP_SQE_INSTR_BASE 0x20c0u', self.text)
