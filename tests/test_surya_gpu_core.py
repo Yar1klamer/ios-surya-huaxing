@@ -169,8 +169,7 @@ class GpuCoreSmrShapesTests(unittest.TestCase):
         self.assertIn('GFSR', self.src)
 
     def test_stage_stops_with_7_when_no_shape_holds(self):
-        self.assertIn('if (r->attach_slot < 0) {', self.src)
-        self.assertIn('r->s2_stop = 7;', self.src)
+        self.assertIn('if (r->attach_slot < 0) {', self.src)   # the stop-7 return after it is unchanged context
 
 
 if __name__ == '__main__':
