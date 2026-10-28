@@ -25,11 +25,11 @@ done
 
 # Xcode 15.x, not the newest one.
 if [ -z "${XCODE:-}" ]; then
-	XCODE=$(ls -d /Applications/Xcode_15*.app /Applications/Xcode15*.app /Applications/Xcode-15*.app /Applications/Xcode.app 2>/dev/null | head -1 || true)
+	XCODE=$(ls -d /Applications/Xcode_15*.app /Applications/Xcode15*.app /Applications/Xcode-15*.app /Applications/Xcode.app 2>/dev/null | sed -n 1p || true)
 fi
 [ -n "$XCODE" ] && [ -d "$XCODE" ] || { echo "Xcode 15.x not found in /Applications (set XCODE=...)" >&2; exit 1; }
 export DEVELOPER_DIR="$XCODE/Contents/Developer"
-XCVER=$(xcodebuild -version | head -1)
+XCVER=$(xcodebuild -version | sed -n 1p)
 echo "using $XCVER at $XCODE"
 case "$XCVER" in
 	"Xcode 15."*) ;;
@@ -50,7 +50,7 @@ if ! command -v cmake >/dev/null || ! command -v ninja >/dev/null; then
 fi
 export SURYA_EXTRA_PATH="$WORK/bin:$WORK/venv/bin"
 export PATH="$SURYA_EXTRA_PATH:$PATH"
-cmake --version | head -1
+cmake --version | sed -n 1p
 ninja --version
 
 # The build project, pinned, with our patches next to blacktop's.
