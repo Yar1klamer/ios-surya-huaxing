@@ -8,6 +8,13 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — GUI на 6 ядрах: время загрузки 15 мин -> ~1 мин (наблюдение владельца)
+- `boot-smp6.img` (sha256 983312d5...), `fastboot boot`: дисплей работает, система грузится ~1 минуту (раньше ~15 мин на одном ядре).
+- Лаги остаются, но заметно меньше. Вероятные причины остатка (гипотезы): рендер на CPU (GPU не используется), частоты CPU
+  оставлены как есть после ABL (нет cpufreq-драйвера; у HakiOS это `hakios.cpufreq.c`), A76-ядра (6,7) не включены.
+- Подготовлены `boot-smp8.img` (GUI, cpus=8) и `boot-smp8-diag.img` (консоль) в `research/images/`; не загружались.
+- Следующий шаг: проверить cpus=8, затем cpufreq по образцу HakiOS (проверить источник частот на surya), затем GPU.
+
 ## 2026-10-28 — SMP на железе: 6 ядер подняты (наблюдение, фото владельца)
 - Образ `boot-smp6-diag.img` (sha256 afefb95a...), `fastboot boot`, Sending 0.450s / Booting 5.093s. Без записи разделов.
   (Телефон был в fastbootd из recovery — `boot` там не работает; `fastboot reboot bootloader` помог.)
