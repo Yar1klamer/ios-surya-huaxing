@@ -177,9 +177,11 @@ def validate_payload(blob):
     firmware = touch_chosen.prop('surya-touch-firmware')
     if firmware is not None:
         import surya_touch_firmware
-        if not apple_root or 'sweettouch=1' not in cmd or touch_chosen.prop('surya-touch-panel') != b'tianma\0':
-            raise ValueError('touch firmware requires the explicit Tianma root profile')
-        surya_touch_firmware.validate(firmware)
+        panel = touch_chosen.prop('surya-touch-panel')
+        panels = {name.encode() + b'\0': name for name in surya_touch_firmware.PANELS}
+        if not apple_root or 'sweettouch=1' not in cmd or panel not in panels:
+            raise ValueError('touch firmware requires the explicit Tianma or Huaxing root profile')
+        surya_touch_firmware.validate(firmware, panels[panel])
     ranges = []
     table_end = mkpayload.SEG_TABLE + count * 32
     for i in range(count):

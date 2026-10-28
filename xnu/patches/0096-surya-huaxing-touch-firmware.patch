@@ -1,0 +1,115 @@
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -1042,13 +1042,34 @@ surya_nvt_firmware_state(void)
+  * boot sequence: Xiaomi surya-q-oss nt36xxx_spi (NT36675, hw_crc=2).
+  * No flash-program commands. Validate the entire image before device writes. */
+ struct surya_nvt_part { uint32_t off, addr, size, crc; };
+-static const struct surya_nvt_part surya_nvt_parts[] = {
++#define SURYA_NVT_NPARTS 5
++/* The two panel variants share the header layout (parts 0/1 at 0x0 and 0xc, 2 and 3 at 0x60 and
++ * 0x70, 4 at 0xf0); each table is that image's own header. */
++static const struct surya_nvt_part surya_nvt_parts_tianma[SURYA_NVT_NPARTS] = {
+ 	{0x100u, 0x0u, 77696u, 0xb947fe34u},
+ 	{0x18100u, 0x27140u, 16880u, 0xdfb4d648u},
+ 	{0x13080u, 0x12f80u, 3017u, 0x313c556cu},
+ 	{0x13c48u, 0x20000u, 2463u, 0xaf1163b6u},
+ 	{0x0u, 0x27040u, 256u, 0x1cd69d8bu},
+ };
++static const struct surya_nvt_part surya_nvt_parts_huaxing[SURYA_NVT_NPARTS] = {
++	{0x100u, 0x0u, 77512u, 0xa6340a0bu},
++	{0x18100u, 0x27140u, 16880u, 0x8ef212d5u},
++	{0x12fc8u, 0x12ec8u, 3017u, 0xe9b6bf79u},
++	{0x13b90u, 0x20000u, 2463u, 0x7d15824bu},
++	{0x0u, 0x27040u, 256u, 0x477d3432u},
++};
++struct surya_nvt_variant {
++	const char *name;
++	unsigned name_len;              /* with the terminating NUL, as in the ADT property */
++	uint32_t image_crc;
++	uint8_t ver0, ver1;             /* image's firmware version bytes at 126976 */
++	const struct surya_nvt_part *parts;
++};
++static const struct surya_nvt_variant surya_nvt_variants[] = {
++	{"tianma", 7, 0x9f8b9838u, 0xc2, 0x3d, surya_nvt_parts_tianma},
++	{"huaxing", 8, 0x10904696u, 0xc3, 0x3c, surya_nvt_parts_huaxing},
++};
+ 
+ static uint32_t
+ surya_nvt_blob_crc(const uint8_t *data, unsigned len)
+@@ -1063,14 +1084,14 @@ surya_nvt_blob_crc(const uint8_t *data, unsigned len)
+ }
+ 
+ static bool
+-surya_nvt_blob_valid(const uint8_t *data, unsigned len)
++surya_nvt_blob_valid(const uint8_t *data, unsigned len, const struct surya_nvt_variant *v)
+ {
+-	if (!data || len != 139264u || surya_nvt_blob_crc(data, len) != 0x9f8b9838u)
++	if (!data || len != 139264u || surya_nvt_blob_crc(data, len) != v->image_crc)
+ 		return false;
+-	if (data[126976] != 0xc2 || data[126977] != 0x3d ||
++	if (data[126976] != v->ver0 || data[126977] != v->ver1 ||
+ 	    memcmp(data + 131069, "NVT", 3) != 0) return false;
+-	for (unsigned i = 0; i < sizeof(surya_nvt_parts)/sizeof(surya_nvt_parts[0]); ++i) {
+-		const struct surya_nvt_part *p = &surya_nvt_parts[i];
++	for (unsigned i = 0; i < SURYA_NVT_NPARTS; ++i) {
++		const struct surya_nvt_part *p = &v->parts[i];
+ 		if (!p->size || p->off > len || p->size > len - p->off ||
+ 		    p->addr >= 0x30000u || p->size > 0x30000u - p->addr) return false;
+ 	}
+@@ -1114,24 +1135,37 @@ surya_nvt_load_firmware(void)
+ 	const uint8_t *fw = NULL;
+ 	const char *panel = NULL;
+ 	unsigned len = 0, panel_len = 0;
++	const struct surya_nvt_variant *variant = NULL;
++	const struct surya_nvt_part *parts;
+ 	uint8_t tx[65], verify[64], crc_enable = 0;
+ 	int err;
+-	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
+ 	    SecureDTGetProperty(chosen, "surya-touch-panel", (void const **)&panel,
+-	    &panel_len) != kSuccess || panel_len != 7 || memcmp(panel, "tianma", 7) ||
++	    &panel_len) == kSuccess) {
++		for (unsigned i = 0; i < sizeof(surya_nvt_variants)/sizeof(surya_nvt_variants[0]); ++i) {
++			if (panel_len == surya_nvt_variants[i].name_len &&
++			    !memcmp(panel, surya_nvt_variants[i].name, panel_len))
++				variant = &surya_nvt_variants[i];
++		}
++	}
++	if (!variant ||
+ 	    SecureDTGetProperty(chosen, "surya-touch-firmware", (void const **)&fw,
+-	    &len) != kSuccess || !surya_nvt_blob_valid(fw, len)) {
+-		printf("SURYA TOUCH: pinned Tianma firmware missing or rejected; no upload\n");
++	    &len) != kSuccess || !surya_nvt_blob_valid(fw, len, variant)) {
++		printf("SURYA TOUCH: pinned panel firmware missing or rejected; no upload\n");
+ 		return EINVAL;
+ 	}
+-	printf("SURYA TOUCH: loading verified Tianma image into volatile SRAM\n");
++	parts = variant->parts;
++	if (variant->name[0] == 'h')
++		printf("SURYA TOUCH: loading verified Huaxing image into volatile SRAM\n");
++	else
++		printf("SURYA TOUCH: loading verified Tianma image into volatile SRAM\n");
+ 	err = surya_nvt_write(0x3f0fe, 0x69, 1); /* bootloader reset */
+ 	if (err) return err;
+ 	surya_touch_wait(5);
+ 	err = surya_nvt_write(0x3f310, 0, 1); /* disable fast-read */
+ 	if (err) return err;
+-	for (unsigned i = 0; i < sizeof(surya_nvt_parts)/sizeof(surya_nvt_parts[0]); ++i) {
+-		const struct surya_nvt_part *p = &surya_nvt_parts[i];
++	for (unsigned i = 0; i < SURYA_NVT_NPARTS; ++i) {
++		const struct surya_nvt_part *p = &parts[i];
+ 		for (unsigned off = 0; off < p->size;) {
+ 			uint32_t addr = p->addr + off;
+ 			unsigned n = (unsigned)MIN(64u, p->size - off);
+@@ -1150,8 +1184,8 @@ surya_nvt_load_firmware(void)
+ 		}
+ 		printf("SURYA TOUCH: SRAM part=%u verified bytes=%u\n", i, p->size);
+ 	}
+-	err = surya_nvt_crc_bank(&surya_nvt_parts[0], 0x3f128, 0x3f118, 0x3f100);
+-	if (!err) err = surya_nvt_crc_bank(&surya_nvt_parts[1], 0x3f12c, 0x3f130, 0x3f104);
++	err = surya_nvt_crc_bank(&parts[0], 0x3f128, 0x3f118, 0x3f100);
++	if (!err) err = surya_nvt_crc_bank(&parts[1], 0x3f12c, 0x3f130, 0x3f104);
+ 	if (!err) err = surya_nvt_addr(0x3f30e);
+ 	if (!err) err = surya_touch_spi_read(0x0e, &crc_enable, 1);
+ 	if (!err) err = surya_nvt_write(0x3f30e, crc_enable | 0x80u, 1);

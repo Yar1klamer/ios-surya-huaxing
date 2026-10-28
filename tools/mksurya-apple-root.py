@@ -15,7 +15,7 @@ p.add_argument('--diagnostic', action='store_true', help='tee selected daemon st
 p.add_argument('--gui', action='store_true', help='clean GUI boot: mute console on first frame present and set sweetfb_hz=30')
 p.add_argument('--touch-diagnostic', action='store_true', help='enable touch with visible console diagnostics')
 
-p.add_argument('--touch-firmware', type=Path, help='pinned Poco Tianma controller RAM firmware')
+p.add_argument('--touch-firmware', type=Path, help='pinned Poco touch controller RAM firmware (Tianma or Huaxing image; the panel is taken from its hash)')
 p.add_argument('--gmu-firmware', type=Path, help='pinned Adreno 618 GMU firmware')
 
 p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before launchd for offline XNU GPU table allocation checks')
@@ -44,10 +44,14 @@ if a.touch_firmware or a.gmu_firmware:
     if a.touch_firmware:
         if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic):
             raise SystemExit('touch firmware requires a touch-enabled boot profile')
-        if b'SURYA TOUCH: loading verified Tianma image' not in kernel:
-            raise SystemExit('kernel lacks the bounded Tianma SRAM loader')
-        fw = surya_touch_firmware.validate(a.touch_firmware.read_bytes())
-        surya.setprop(chosen, 'surya-touch-panel', b'tianma\0')
+        fw_bytes = a.touch_firmware.read_bytes()
+        panel = surya_touch_firmware.panel_of(fw_bytes)
+        if panel is None:
+            raise SystemExit('touch firmware is not one of the pinned Tianma/Huaxing images')
+        if ('SURYA TOUCH: loading verified %s image' % panel.capitalize()).encode() not in kernel:
+            raise SystemExit('kernel lacks the bounded %s SRAM loader' % panel.capitalize())
+        fw = surya_touch_firmware.validate(fw_bytes, panel)
+        surya.setprop(chosen, 'surya-touch-panel', panel.encode() + b'\0')
         surya.setprop(chosen, 'surya-touch-firmware', fw)
     if a.gmu_firmware:
         gmu_fw = a.gmu_firmware.read_bytes()
