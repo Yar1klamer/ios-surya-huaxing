@@ -204,6 +204,16 @@ def validate_payload(blob):
         surya_zap_firmware.validate(zap_mdt, zap_code)
     elif 'suryazap=1' in cmd:
         raise ValueError('the GPU zap profile needs the pinned zap shader images')
+    sqe = touch_chosen.prop('surya-gpu-sqe')
+    m_core = re.search(r'\bsuryacore=(\d+)', cmd)
+    core_stage = int(m_core.group(1)) if m_core else 0
+    if sqe is not None:
+        import surya_sqe_firmware
+        if not apple_root or core_stage < 2:
+            raise ValueError('the SQE microcode belongs to the 3D core profile, stage 2 and later')
+        surya_sqe_firmware.validate(sqe)
+    elif core_stage >= 2:
+        raise ValueError('3D core stage 2 needs the pinned SQE microcode')
     ranges = []
     table_end = mkpayload.SEG_TABLE + count * 32
     for i in range(count):

@@ -78,6 +78,11 @@ if a.touch_firmware or a.gmu_firmware or a.zap_dir:
                                                         (a.zap_dir / 'a615_zap.b02').read_bytes())
         surya.setprop(chosen, 'surya-zap-mdt', zap_mdt)
         surya.setprop(chosen, 'surya-zap-code', zap_code)
+        if a.gpu_core_stage >= 2:
+            import surya_sqe_firmware
+            if b'SURYA CORE: programming SMMU' not in kernel:
+                raise SystemExit('kernel lacks the SURYA 3D core stage 2')
+            surya.setprop(chosen, 'surya-gpu-sqe', surya_sqe_firmware.validate((a.zap_dir / 'a630_sqe.fw').read_bytes()))
     adt_path = a.out.with_suffix('.adt')
     adt_path.parent.mkdir(parents=True, exist_ok=True)
     adt_path.write_bytes(adt.serialize(tree))

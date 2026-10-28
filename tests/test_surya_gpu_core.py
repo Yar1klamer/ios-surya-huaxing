@@ -59,5 +59,66 @@ class GpuCoreStage1Tests(unittest.TestCase):
         self.assertIn('PE_parse_boot_argn("suryacore"', self.src)
 
 
+def parity(v):
+    """Linux adreno_gpu.h PM4_PARITY."""
+    return (0x9669 >> (0xf & (v ^ (v >> 4) ^ (v >> 8) ^ (v >> 12) ^ (v >> 16) ^ (v >> 20) ^ (v >> 24) ^ (v >> 28)))) & 1
+
+
+def pkt7(opcode, count):
+    return (7 << 28) | count | (parity(count) << 15) | ((opcode & 0x7f) << 16) | (parity(opcode) << 23)
+
+
+def added2():
+    text = (ROOT / 'xnu/patches/0101-surya-gpu-core-stage2.patch').read_text()
+    return chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+
+class GpuCoreStage2Tests(unittest.TestCase):
+    def setUp(self):
+        self.src = added2()
+
+    def test_pkt7_header_matches_linux(self):
+        # CP_ME_INIT (0x48) with 8 payload dwords: the header the Linux driver puts in the ring
+        self.assertEqual(pkt7(0x48, 8), 0x70c80008)
+        self.assertIn('(7u << 28) | count | (pm4_parity(count) << 15) | ((opcode & 0x7fu) << 16) | (pm4_parity(opcode) << 23)', self.src)
+
+    def test_ring_control_value_is_msm_gpu_rb_cntl_default_with_no_update(self):
+        # BUFSZ = log2(32 KiB / 8) = 12, BLKSZ = log2(32 / 8) = 2 (bits 13:8), NO_UPDATE = bit 27
+        self.assertEqual((12 | (2 << 8) | (1 << 27)), 0x0800020c)
+        self.assertIn('#define RB_CNTL_VALUE   (12u | (2u << 8) | (1u << 27))', self.src)
+
+    def test_cp_registers_are_linuxs_offsets(self):
+        for name, off in (('CP_RB_BASE', 0x2000), ('CP_RB_CNTL', 0x2008), ('CP_RB_RPTR', 0x2018), ('CP_RB_WPTR', 0x201c),
+                          ('CP_SQE_CNTL', 0x2020), ('CP_SQE_INSTR_BASE', 0x2058), ('CP_HW_FAULT', 0x2084),
+                          ('CP_INTERRUPT_STATUS', 0x208c), ('RBBM_INT_0_STATUS', 0x804), ('RBBM_STATUS', 0x840)):
+            self.assertRegex(self.src, r'#define %s\s+%#x' % (name, off), name)
+
+    def test_stream_match_is_the_device_trees(self):
+        # kgsl gfx3d_user: iommus = <&kgsl_smmu 0x0 0x401>; S2CR first (translate, bank 0), then the match register
+        self.assertIn('(1u << 31) | (0x401u << 16) | (uint32_t)SURYA_DT_USER_SID', self.src)
+        self.assertLess(self.src.index('smmu + 0xc00) = 0;'), self.src.index('smmu + 0x800) ='))
+
+    def test_ordering_in_the_core_stage(self):
+        order = [self.src.index(m) for m in ('ArmSmmu4KProgramDisabledContext', 'smmu + 0xc00) = 0;', 'core_wr64(gpu, CP_SQE_INSTR_BASE',
+                                              'core_wr(gpu, CP_SQE_CNTL, 1);', 'core_wr(gpu, CP_RB_WPTR, n);')]
+        self.assertEqual(order, sorted(order))
+        # the zap shader is not part of this stage and the CP is stopped again afterwards
+        self.assertNotIn('surya_zap_load', self.src)
+        self.assertIn('core_wr(gpu, CP_SQE_CNTL, 0);', self.src)
+
+    def test_sqe_microcode_contract_and_profile(self):
+        import surya_sqe_firmware as sqe
+        with self.assertRaises(ValueError):
+            sqe.validate(bytes(sqe.SIZE))
+        self.assertEqual(surya.gpu_core_cmdline(2), surya.APPLE_GPU_ZAP_CMDLINE + ' suryacore=2')
+        self.assertIn(surya.gpu_core_cmdline(2), surya.APPLE_GPU_CORE_CMDLINES)
+        self.assertIn('sqe_size - 4', self.src)     # the microcode goes to the GPU without its first dword
+        fw = ROOT / 'research' / 'macos-bundle' / 'fw' / 'a630_sqe.fw'
+        alt = ROOT / 'research' / 'live-surya-android' / 'fw' / 'a630_sqe.fw'
+        path = fw if fw.exists() else alt
+        if path.exists():
+            sqe.validate(path.read_bytes())
+
+
 if __name__ == '__main__':
     unittest.main()

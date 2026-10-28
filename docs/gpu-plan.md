@@ -59,7 +59,7 @@ UniXNU (ArmSmmu4K, NativeAdrenoABI — A740-специфичный, A6xx не п
    (| NO_UPDATE если нет RPTR-shadow), `CP_RB_RPTR_ADDR`(0x2010, 64 бита) при shadow. Старт: `CP_SQE_CNTL`(0x2020)=1.
 5. Первая команда: PKT7 `CP_ME_INIT`(0x48), 8 слов: 0x2f, 0x3, 0x20000000, 0,0,0,0,0; запись wptr в `CP_RB_WPTR`(0x201c); ждать `rptr==wptr` и RBBM_STATUS idle.
 6. Выход из secure mode: после загрузки zap (G2, но НЕ отдавать обратно) — PKT7 `CP_SET_SECURE_MODE`(0x66) со словом 0; затем тест: PKT7 `CP_MEM_WRITE`(0x3d) в нашу страницу.
-   Заголовок PKT7: `(7<<28) | count | parity(count)<<7 | opcode<<16 | parity(opcode)<<23`.
+   Заголовок PKT7: `(7<<28) | count | parity(count)<<15 | (opcode&0x7f)<<16 | parity(opcode)<<23` (исправлено: у Linux `PKT7`, бит чётности счётчика — 15, не 7).
 - Все обращения GPU к памяти (микрокод, кольцо, цель записи) идут через SMMU CB0: нужны таблицы с этими страницами и привязка потока 0
   (на этом телефоне S2CR0 читается 0x200ff, библиотека требует ровно FAULT: привязку делаем отдельно с read-back).
 - Порядок проверок на железе: **G3a** только регистры шагов 1–3 (запись и read-back, без CP), **G3b** SMMU + микрокод + кольцо + `CP_ME_INIT`,

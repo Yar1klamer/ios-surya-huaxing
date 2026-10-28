@@ -1,0 +1,356 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -15,8 +15,16 @@
+ #include <sys/param.h>
+ #include <sys/systm.h>
+ #include <kern/clock.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
++#include <pexpert/device_tree.h>
++#include "surya_gpu_dt.h"
++#include "surya_unixnu_smmu.h"
+ #include "surya_gpu_core.h"
+ 
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
++
+ #define UCHE_TRAP_BASE_VALUE    0x1fffffffff000ull      /* a6xx_gpu_init: uche_trap_base */
+ #define GMEM_BASE               0x100000ull             /* the GMEM window Linux sets: [1 MiB, 1 MiB + 512 KiB) */
+ #define GMEM_SIZE               0x80000ull              /* A618 */
+@@ -128,8 +136,197 @@ stage1(vm_offset_t gpu, struct surya_gpu_core_report *r)
+ 	}
+ }
+ 
++/*
++ * Stage 2 (suryacore=2), "G3b": the command processor, started. As Linux's a6xx_hw_init does after the registers above:
++ * the microcode (a630_sqe.fw without its first dword, as adreno_fw_create_bo copies it) and a 32 KiB ring go in memory of ours;
++ * context bank 0 of the GPU's SMMU is programmed with tables that map that memory, stream 0 (the DT's "0x0 0x401": the user
++ * context, matching ids 0, 1, 0x400 and 0x401) is attached to it, the CP is given the addresses and started (CP_SQE_CNTL),
++ * and CP_ME_INIT is sent. Success here is the ring's read pointer reaching its write pointer with no SMMU fault.
++ * Left out: the zap shader (G3c: Linux loads it after this and then leaves secure mode with CP_SET_SECURE_MODE).
++ */
++#define G3_IOVA         0x10000000ull   /* where the GPU sees the buffer: below 4 GiB, clear of the GMEM window at 1 MiB */
++#define G3_BYTES        0x20000u        /* 128 KiB: microcode, ring, scratch */
++#define G3_SQE_OFF      0x00000u
++#define G3_RING_OFF     0x08000u
++#define G3_RING_BYTES   0x08000u        /* MSM_GPU_RINGBUFFER_SZ */
++#define G3_SCRATCH_OFF  0x10000u
++
++#define CP_RB_BASE      0x2000u
++#define CP_RB_CNTL      0x2008u
++#define CP_RB_RPTR      0x2018u
++#define CP_RB_WPTR      0x201cu
++#define CP_SQE_CNTL     0x2020u
++#define CP_SQE_INSTR_BASE 0x2058u
++#define CP_HW_FAULT     0x2084u
++#define CP_INTERRUPT_STATUS 0x208cu
++#define RBBM_INT_0_STATUS 0x804u
++#define RBBM_STATUS     0x840u
++/* MSM_GPU_RB_CNTL_DEFAULT: BUFSZ = log2(32 KiB / 8) = 12 in bits 5:0, BLKSZ = log2(32 / 8) = 2 in bits 13:8; NO_UPDATE (bit 27)
++ * because no read-pointer shadow is set up: the pointer is read from the register. */
++#define RB_CNTL_VALUE   (12u | (2u << 8) | (1u << 27))
++
++#define CP_ME_INIT_OPCODE 0x48u
++
++static uint32_t
++pm4_parity(uint32_t v)
++{
++	return (0x9669u >> (0xfu & (v ^ (v >> 4) ^ (v >> 8) ^ (v >> 12) ^ (v >> 16) ^ (v >> 20) ^ (v >> 24) ^ (v >> 28)))) & 1u;
++}
++
++/* adreno_gpu.h PKT7(): type 7, count in bits 14:0 with its parity at bit 15, opcode in 22:16 with its parity at bit 23 */
++static uint32_t
++pkt7(uint32_t opcode, uint32_t count)
++{
++	return (7u << 28) | count | (pm4_parity(count) << 15) | ((opcode & 0x7fu) << 16) | (pm4_parity(opcode) << 23);
++}
++
++static void
++clean_to_memory(vm_offset_t va, size_t bytes)
++{
++	for (uintptr_t p = (uintptr_t)va & ~(uintptr_t)63; p < (uintptr_t)va + bytes; p += 64) {
++		__asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++	}
++	__asm__ volatile("dsb sy; isb" ::: "memory");
++}
++
++static void
++core_wr64(vm_offset_t gpu, uint32_t off, uint64_t value)
++{
++	core_wr(gpu, off, (uint32_t)value);
++	core_wr(gpu, off + 4, (uint32_t)(value >> 32));
++}
++
++static void
++stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_gpu_core_report *r)
++{
++	DTEntry chosen = NULL;
++	void const *sqe = NULL;
++	unsigned int sqe_size = 0;
++	vm_offset_t buf = 0, tables = 0;
++	ArmSmmu4KIo io;
++
++	if (u == NULL || u->stage != 3 || u->code != 0 || u->cb_offset != SURYA_DT_USER_CB_OFFSET) {
++		r->s2_stop = 1;         /* the SMMU capture did not stop where this stage expects it */
++		return;
++	}
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	    SecureDTGetProperty(chosen, "surya-gpu-sqe", &sqe, &sqe_size) != kSuccess || !sqe || sqe_size != 32136) {
++		r->s2_stop = 2;         /* the microcode is not in the device tree */
++		return;
++	}
++	if (PAGE_SIZE != 16384 ||
++	    kmem_alloc_contig(kernel_map, &buf, G3_BYTES, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
++	    kmem_alloc_contig(kernel_map, &tables, 16384, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		r->s2_stop = 3;
++		return;
++	}
++	ppnum_t bpn = pmap_find_phys(kernel_pmap, (addr64_t)buf), tpn = pmap_find_phys(kernel_pmap, (addr64_t)tables);
++	if (!bpn || !tpn) {
++		r->s2_stop = 3;
++		return;
++	}
++	const uint64_t buf_pa = ptoa_64(bpn), tables_pa = ptoa_64(tpn);
++
++	/* the microcode, without its first dword, and the ring, in the buffer; the tables that map the whole buffer */
++	memcpy((void *)(buf + G3_SQE_OFF), (const uint8_t *)sqe + 4, sqe_size - 4);
++	r->sqe_word0 = ((volatile uint32_t *)(buf + G3_SQE_OFF))[0];
++	r->sqe_word1 = ((volatile uint32_t *)(buf + G3_SQE_OFF))[1];
++	volatile uint32_t *ring = (volatile uint32_t *)(buf + G3_RING_OFF);
++	unsigned n = 0;
++	ring[n++] = pkt7(CP_ME_INIT_OPCODE, 8);
++	ring[n++] = 0x0000002f;         /* a6xx_cp_init */
++	ring[n++] = 0x00000003;         /* multiple hardware contexts */
++	ring[n++] = 0x20000000;         /* error detection */
++	ring[n++] = 0;
++	ring[n++] = 0;
++	ring[n++] = 0;                  /* no workarounds */
++	ring[n++] = 0;
++	ring[n++] = 0;
++	ArmSmmu4KConfig config = {39, 36, tables_pa, 4};
++	ArmSmmu4KRange range = {G3_IOVA, buf_pa, G3_BYTES, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2};
++	ArmSmmu4KResult built = {0};
++	if (ArmSmmu4KBuild(&config, &range, 1, (uint64_t *)tables, 4, &built) != ArmSmmu4KSuccess) {
++		r->s2_stop = 4;
++		return;
++	}
++	clean_to_memory(tables, 16384);
++	clean_to_memory(buf, G3_BYTES);         /* the GPU reads memory, not this processor's cache */
++
++	/* context bank 0: programmed with those tables (capture() left it disabled), then enabled by the library after read-back */
++	vm_offset_t smmu = ml_io_map(SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE);
++	if (!smmu) {
++		r->s2_stop = 5;
++		return;
++	}
++	surya_unixnu_smmu_io(smmu, &io);
++	ArmSmmu4KContextConfig context = {0};
++	context.lower = &config;
++	context.lower_tables = &built;
++	context.id0 = u->id0;
++	context.id2 = u->id2;
++	context.asid = 1;
++	context.stall_on_fault = 1;
++	context.coherent_walk = 0;
++	ArmSmmu4KProgramResult prog = {0};
++	printf("SURYA CORE: programming SMMU context bank 0 for the GPU's %#llx..+%#x\n", G3_IOVA, G3_BYTES);
++	delay(20000);
++	if (ArmSmmu4KProgramDisabledContext(&io, 0, &context, 10000, &prog) != ArmSmmu4KSuccess || !prog.enabled) {
++		r->s2_stop = 6;
++		return;
++	}
++
++	/* stream 0 (match 0x0 with mask 0x401) to that context: S2CR as translate-to-bank-0, then the match register */
++	printf("SURYA CORE: attaching stream 0 (mask 0x401) to context bank 0\n");
++	delay(20000);
++	*(volatile uint32_t *)(smmu + 0xc00) = 0;                                       /* TYPE translate, CBNDX 0 */
++	__asm__ volatile("dsb osh" ::: "memory");
++	*(volatile uint32_t *)(smmu + 0x800) = (1u << 31) | (0x401u << 16) | (uint32_t)SURYA_DT_USER_SID;
++	__asm__ volatile("dsb osh" ::: "memory");
++	r->s2cr0 = *(volatile uint32_t *)(smmu + 0xc00);
++	r->smr0 = *(volatile uint32_t *)(smmu + 0x800);
++	if (r->s2cr0 != 0 || r->smr0 != ((1u << 31) | (0x401u << 16) | (uint32_t)SURYA_DT_USER_SID)) {
++		r->s2_stop = 7;
++		return;
++	}
++
++	/* the command processor: addresses, then start, then CP_ME_INIT */
++	printf("SURYA CORE: giving the CP the microcode at %#llx and the ring at %#llx\n", G3_IOVA + G3_SQE_OFF,
++	    G3_IOVA + G3_RING_OFF);
++	delay(20000);
++	core_wr64(gpu, CP_SQE_INSTR_BASE, G3_IOVA + G3_SQE_OFF);
++	core_wr64(gpu, CP_RB_BASE, G3_IOVA + G3_RING_OFF);
++	core_wr(gpu, CP_RB_CNTL, RB_CNTL_VALUE);
++	printf("SURYA CORE: starting the command processor (CP_SQE_CNTL)\n");
++	delay(20000);
++	core_wr(gpu, CP_SQE_CNTL, 1);
++	printf("SURYA CORE: CP_ME_INIT: write pointer to %u\n", n);
++	delay(20000);
++	core_wr(gpu, CP_RB_WPTR, n);
++	for (unsigned i = 0; i < 100; i++) {
++		delay(2000);
++		r->rptr = core_rd(gpu, CP_RB_RPTR);
++		if (r->rptr == n) {
++			break;
++		}
++	}
++	r->wptr = core_rd(gpu, CP_RB_WPTR);
++	r->status_cp = core_rd(gpu, RBBM_STATUS);
++	r->int0 = core_rd(gpu, RBBM_INT_0_STATUS);
++	r->hw_fault = core_rd(gpu, CP_HW_FAULT);
++	r->cp_int = core_rd(gpu, CP_INTERRUPT_STATUS);
++	r->cb_sctlr = *(volatile uint32_t *)(smmu + u->cb_offset);
++	r->cb_fsr = *(volatile uint32_t *)(smmu + u->cb_offset + 0x58);
++	r->cb_far = *(volatile uint32_t *)(smmu + u->cb_offset + 0x60) |
++	    ((uint64_t)*(volatile uint32_t *)(smmu + u->cb_offset + 0x64) << 32);
++	printf("SURYA CORE: ring read pointer %u of %u, SMMU FSR %#x\n", r->rptr, n, r->cb_fsr);
++	core_wr(gpu, CP_SQE_CNTL, 0);           /* stop the CP again: nothing else is going to feed it */
++}
++
+ void
+-surya_gpu_core_run(vm_offset_t gpu, unsigned stage, struct surya_gpu_core_report *r)
++surya_gpu_core_run(vm_offset_t gpu, unsigned stage, const struct surya_unixnu_smmu_report *u,
++    struct surya_gpu_core_report *r)
+ {
+ 	r->asked = true;
+ 	r->stage = stage;
+@@ -140,6 +337,12 @@ surya_gpu_core_run(vm_offset_t gpu, unsigned stage, struct surya_gpu_core_report
+ 		stage1(gpu, r);
+ 		r->done = 1;
+ 	}
++	if (stage >= 2) {
++		stage2(gpu, u, r);
++		if (!r->s2_stop) {
++			r->done = 2;
++		}
++	}
+ 	r->status_after = core_rd(gpu, 0x840);
+ 	printf("SURYA CORE: stage %u done; RBBM_STATUS=%#x\n", r->done, r->status_after);
+ }
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -23,8 +23,20 @@ struct surya_gpu_core_report {
+ 	unsigned same;                  /* ... and read back as written */
+ 	unsigned differ;                /* ... and read back otherwise (not a failure: many bits are write-only or masked) */
+ 	struct surya_core_diff diffs[SURYA_CORE_DIFFS];
++
++	/* stage 2 (G3b): the command processor started from microcode and a ring the GPU reads through the SMMU */
++	int      s2_stop;               /* 0 = ran to the end; else which step stopped it (see stage2() in surya_gpu_core.c) */
++	uint32_t cb_sctlr, cb_fsr;      /* SMMU context bank 0 afterwards */
++	uint64_t cb_far;
++	uint32_t smr0, s2cr0;           /* stream 0 as attached */
++	uint32_t rptr, wptr;            /* the ring after CP_ME_INIT */
++	uint32_t status_cp, int0, hw_fault, cp_int;
++	uint32_t sqe_word0, sqe_word1;  /* first words of the microcode as the GPU-visible buffer holds them */
+ };
+ 
+-/* Runs the steps up to `stage` against the powered GPU block mapped at `gpu`. */
+-void surya_gpu_core_run(vm_offset_t gpu, unsigned stage, struct surya_gpu_core_report *r);
++struct surya_unixnu_smmu_report;
++
++/* Runs the steps up to `stage` against the powered GPU block mapped at `gpu`; `u` is the SMMU capture (stage 2 needs it). */
++void surya_gpu_core_run(vm_offset_t gpu, unsigned stage, const struct surya_unixnu_smmu_report *u,
++    struct surya_gpu_core_report *r);
+ #endif
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -409,6 +409,9 @@ surya_gpu_pt_diagnostic(void)
+     int pwr_res = surya_gpu_power_check(&st);
+     struct surya_unixnu_smmu_report unixnu = {0};
+     unixnu.code = -1;
++    int core_stage_early = 0;
++    (void)PE_parse_boot_argn("suryacore", &core_stage_early, sizeof(core_stage_early));
++    surya_unixnu_stop_before_context = core_stage_early >= 2;       /* G3b programs context bank 0 itself */
+     printf("SURYA UNIXNU POWER RESULT: code=%d OOB=%u GX=%u\n", pwr_res, st.oob_ok, st.gx_powered);
+     if (!pt_res && st.oob_ok && st.gx_powered)
+         surya_unixnu_smmu_capture(&unixnu);
+@@ -429,7 +432,7 @@ surya_gpu_pt_diagnostic(void)
+     (void)PE_parse_boot_argn("suryacore", &core_stage, sizeof(core_stage));
+     if (core_stage > 0 && st.gx_powered) {
+         vm_offset_t core_regs = ml_io_map(SURYA_GPU_PA, SURYA_GPU_SIZE);
+-        if (core_regs) surya_gpu_core_run(core_regs, (unsigned)core_stage, &core);
++        if (core_regs) surya_gpu_core_run(core_regs, (unsigned)core_stage, &unixnu, &core);
+     }
+ 
+     for (;;) {
+@@ -492,7 +495,15 @@ surya_gpu_pt_diagnostic(void)
+                 printf("SURYA CORE: DIFF %s @%#x wrote %#llx read %#llx\n", core.diffs[i].name, core.diffs[i].offset,
+                     core.diffs[i].wrote, core.diffs[i].read);
+         }
+-        printf("No GPU commands submitted; Metal acceleration not enabled\n");
++        if (core_stage >= 2) {
++            printf("SURYA CORE2: %s stop=%d SMMU SCTLR=%#x FSR=%#x FAR=%#llx SMR0=%#x S2CR0=%#x\n",
++                core.done >= 2 ? "RAN" : "STOPPED", core.s2_stop, core.cb_sctlr, core.cb_fsr, core.cb_far, core.smr0, core.s2cr0);
++            printf("SURYA CORE2: CP ring rptr=%u wptr=%u %s RBBM_STATUS=%#x INT0=%#x HW_FAULT=%#x CP_INT=%#x ucode %#x %#x\n",
++                core.rptr, core.wptr, (core.wptr && core.rptr == core.wptr) ? "CAUGHT UP" : "NOT CAUGHT UP",
++                core.status_cp, core.int0, core.hw_fault, core.cp_int, core.sqe_word0, core.sqe_word1);
++        }
++        printf(core_stage >= 2 ? "Only CP_ME_INIT was sent to the GPU; Metal acceleration not enabled\n" :
++            "No GPU commands submitted; Metal acceleration not enabled\n");
+         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
+         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
+     }
+diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
+--- a/bsd/dev/surya_unixnu_smmu.c
++++ b/bsd/dev/surya_unixnu_smmu.c
+@@ -67,6 +67,21 @@ static int io_barrier(void *cookie)
+     return 0;
+ }
+ 
++int surya_unixnu_stop_before_context;
++
++void surya_unixnu_smmu_io(vm_offset_t smmu, ArmSmmu4KIo *io)
++{
++    *io = (ArmSmmu4KIo){
++        .cookie = (void *)smmu,
++        .register_bytes = SURYA_DT_SMMU_SIZE,
++        .read32 = io_read32,
++        .read64 = io_read64,
++        .write32 = io_write32,
++        .write64 = io_write64,
++        .barrier = io_barrier,
++    };
++}
++
+ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
+ {
+     vm_offset_t tables = 0, data = 0;
+@@ -274,6 +289,12 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
+     printf("SURYA UNIXNU STEP 10: SCTLR=%#x FSR=%#x; read TTBR0\n", r->cb_sctlr, r->cb_fsr);
+     delay(20000);
+     r->cb_ttbr0 = read64(smmu, r->cb_offset + 0x20);
++    if (surya_unixnu_stop_before_context) {
++        printf("SURYA UNIXNU STEP 11: CB0 read; context and streams are left to the 3D core stage\n");
++        delay(20000);
++        r->stage = 3;
++        return;
++    }
+     printf("SURYA UNIXNU STEP 11: CB0 read; build & activate live tables\n");
+     delay(20000);
+     r->stage = 4;
+diff --git a/bsd/dev/surya_unixnu_smmu.h b/bsd/dev/surya_unixnu_smmu.h
+--- a/bsd/dev/surya_unixnu_smmu.h
++++ b/bsd/dev/surya_unixnu_smmu.h
+@@ -2,6 +2,7 @@
+ #ifndef SURYA_UNIXNU_SMMU_H
+ #define SURYA_UNIXNU_SMMU_H
+ #include "ArmSmmu4KContext.h"
++#include "ArmSmmu4KProgram.h"
+ 
+ struct surya_unixnu_smmu_report {
+     uint32_t memnoc_before, memnoc_after, id0, id1, id2, scr0;
+@@ -31,4 +32,9 @@ surya_unixnu_cb0(uint32_t id1, size_t bytes, uint32_t *offset)
+ }
+ 
+ void surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *);
++
++/* G3b: when set, capture() stops (stage 3, code 0) right after reading context bank 0 and leaves its tables, activation
++ * and stream attachment to bsd/dev/surya_gpu_core.c. The I/O callbacks are the same ones capture() uses. */
++extern int surya_unixnu_stop_before_context;
++void surya_unixnu_smmu_io(vm_offset_t smmu, ArmSmmu4KIo *io);
+ #endif
