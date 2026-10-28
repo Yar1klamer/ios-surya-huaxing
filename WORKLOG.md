@@ -8,6 +8,16 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — переезд на хакинтош (macOS 15, Intel i5-13400F): локальная сборка ядра работает
+- Xcode 15.4 (15F31d), SDK 14.5; Homebrew недоступен на Intel — `tools/build-kernel-macos.sh` переделан: `cmake`/`ninja` из pip в venv, заглушки `xcodes`/`gum`, локальный sed в `build.sh`
+  (он пересобирает PATH из Xcode+system+/usr/local, наши каталоги иначе теряются). KDK 13.5 (22G74) ставится скриптом (`sudo installer`, пароль вводит владелец).
+  Для сборки понадобилось `sudo xcodebuild -runFirstLaunch` (иначе `xcodebuild` в bootstrap_cmds падает на CoreSimulator).
+- Все патчи 0001–0099 применились; ядро `research/kernel-local/kernel.development.surya` (sha256 43c85e6e...), все маркеры патчей на месте, как в CI-ядре.
+- `tools/make-boot-image.sh ... gpu-zap` собрал образ на Mac; `fastboot boot` с хакинтоша: через USB-хаб передача зависала (`could not clear input/output pipe`), после
+  переключения в порт напрямую — OKAY за 0,39 с. Отчёт на телефоне идентичен прошлому (G2: ZAP RAN stage=8 code=0, TRUSTZONE AUTHENTICATED, given back yes; тач Huaxing fw=c3/3c).
+- `git push` с Mac пока не настроен (нужна авторизация GitHub владельца); локальные коммиты: 40160b6 и далее. Мой GitHub-токен на Mac не переносился.
+
+
 ## 2026-10-28 — G2 ВЫПОЛНЕН: TrustZone авторизовал zap-шейдер GPU (наблюдение, фото владельца; `boot-gpu-zap.img`, ядро CI 40656..., 8901f79, профиль `--gpu-zap-diagnostic`)
 - `SURYA ZAP: RAN stage=8 code=0 answer=0 header=6860 code=1984 region 0->0x16ff021` и `TRUSTZONE AUTHENTICATED THE ZAP SHADER; given back: yes`.
   Все пять вызовов (SHUTDOWN, INIT_IMAGE, MEM_SETUP, копия b02 в gpu_region@97715000, AUTH_AND_RESET, SHUTDOWN) вернули 0; зарезервированная память до записи 0, после — первое слово кода (0x016ff021), запись прошла.
