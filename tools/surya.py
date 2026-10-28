@@ -34,6 +34,8 @@ APPLE_TOUCH_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb
                        ' suryatouchreport=1')
 APPLE_GPU_PT_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
                         ' suryagpummu=1')
+# G2: the GPU page-table diagnostic plus handing the zap shader to TrustZone (patch 0099). The only profile that does.
+APPLE_GPU_ZAP_CMDLINE = APPLE_GPU_PT_CMDLINE + ' suryazap=1'
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 
@@ -166,7 +168,7 @@ def validate_payload(blob):
     # Validate the same contract used by ADT generation, including address limits.
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
-    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE) if apple_root else (CMDLINE,)
+    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE, APPLE_GPU_ZAP_CMDLINE) if apple_root else (CMDLINE,)
     # Only the cpus=N value may differ, and it must match the ADT's CPU nodes.
     m_cpus = re.search(r'\bcpus=(\d+)', cmd)
     if m_cpus is None or with_cpus(cmd, 1) not in allowed_cmdlines:
@@ -182,6 +184,15 @@ def validate_payload(blob):
         if not apple_root or 'sweettouch=1' not in cmd or panel not in panels:
             raise ValueError('touch firmware requires the explicit Tianma or Huaxing root profile')
         surya_touch_firmware.validate(firmware, panels[panel])
+    zap_mdt = touch_chosen.prop('surya-zap-mdt')
+    zap_code = touch_chosen.prop('surya-zap-code')
+    if zap_mdt is not None or zap_code is not None:
+        import surya_zap_firmware
+        if not apple_root or 'suryazap=1' not in cmd or zap_mdt is None or zap_code is None:
+            raise ValueError('zap shader requires the explicit GPU zap root profile and both images')
+        surya_zap_firmware.validate(zap_mdt, zap_code)
+    elif 'suryazap=1' in cmd:
+        raise ValueError('the GPU zap profile needs the pinned zap shader images')
     ranges = []
     table_end = mkpayload.SEG_TABLE + count * 32
     for i in range(count):

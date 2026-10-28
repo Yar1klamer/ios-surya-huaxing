@@ -22,27 +22,32 @@ p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before
 
 p.add_argument('--cpus', type=int, default=1, help='boot CPU count (1..8); must equal the ADT CPU node count (surya.py --cpus)')
 
+p.add_argument('--gpu-zap-diagnostic', action='store_true', help='GPU page-table diagnostic that also hands the pinned zap shader to TrustZone (needs --zap-dir)')
+p.add_argument('--zap-dir', type=Path, help='directory with the pinned a615_zap.mdt and a615_zap.b02')
+
 a = p.parse_args()
-if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic)) > 1:
+if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic, a.gpu_zap_diagnostic)) > 1:
     raise SystemExit('select only one boot profile')
+if a.gpu_zap_diagnostic != bool(a.zap_dir):
+    raise SystemExit('--gpu-zap-diagnostic and --zap-dir go together')
 kernel = a.kernel.read_bytes()
 if b'SURYA: bounded Apple root writes armed' not in kernel:
     raise SystemExit('kernel lacks bounded SURYA Apple-root support')
 m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
-cmdline = surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
+cmdline = surya.APPLE_GPU_ZAP_CMDLINE if a.gpu_zap_diagnostic else surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
 cmdline = surya.with_cpus(cmdline, a.cpus)
-if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
+if (a.gpu_table_diagnostic or a.gpu_zap_diagnostic) and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt
-if a.touch_firmware or a.gmu_firmware:
+if a.touch_firmware or a.gmu_firmware or a.zap_dir:
     tree, end = adt.parse(a.adt.read_bytes())
     if end != a.adt.stat().st_size:
         raise SystemExit('unexpected trailing ADT bytes')
     chosen = surya.child(tree, 'chosen')
     if a.touch_firmware:
-        if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic):
+        if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic or a.gpu_zap_diagnostic):
             raise SystemExit('touch firmware requires a touch-enabled boot profile')
         fw_bytes = a.touch_firmware.read_bytes()
         panel = surya_touch_firmware.panel_of(fw_bytes)
@@ -58,6 +63,14 @@ if a.touch_firmware or a.gmu_firmware:
         if len(gmu_fw) != 32768:
             raise SystemExit(f'invalid GMU firmware size: {len(gmu_fw)}')
         surya.setprop(chosen, 'surya-gmu-firmware', gmu_fw)
+    if a.zap_dir:
+        import surya_zap_firmware
+        if b'SURYA ZAP: asking' not in kernel:
+            raise SystemExit('kernel lacks the SURYA zap shader loader')
+        zap_mdt, zap_code = surya_zap_firmware.validate((a.zap_dir / 'a615_zap.mdt').read_bytes(),
+                                                        (a.zap_dir / 'a615_zap.b02').read_bytes())
+        surya.setprop(chosen, 'surya-zap-mdt', zap_mdt)
+        surya.setprop(chosen, 'surya-zap-code', zap_code)
     adt_path = a.out.with_suffix('.adt')
     adt_path.parent.mkdir(parents=True, exist_ok=True)
     adt_path.write_bytes(adt.serialize(tree))

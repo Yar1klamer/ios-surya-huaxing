@@ -1,0 +1,296 @@
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -12,6 +12,7 @@
+ #include "surya_gmu_protocol.h"
+ #include "surya_unixnu_smmu.h"
+ #include "surya_tz.h"
++#include "surya_zap.h"
+ 
+ extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+@@ -415,6 +416,12 @@ surya_gpu_pt_diagnostic(void)
+     struct surya_tz_report tz = {0};
+     surya_tz_probe(&tz);
+ 
++    /* G2: the zap shader to TrustZone: only with the explicit suryazap=1 (the profile that carries the images). */
++    struct surya_zap_report zap = {0};
++    int zap_enabled = 0;
++    (void)PE_parse_boot_argn("suryazap", &zap_enabled, sizeof(zap_enabled));
++    if (zap_enabled == 1 && tz.answers) surya_zap_load(&zap);
++
+     for (;;) {
+         disableConsoleOutput = sweet_console_muted = 0;
+         printf("\nSURYA GPU PAGE TABLE DIAGNOSTIC: %s code=%d\n",
+@@ -459,6 +466,14 @@ surya_gpu_pt_diagnostic(void)
+             tz.smc64 ? "64-bit" : "32-bit", tz.code, tz.pas_init, tz.pas_auth);
+         printf("SURYA TZ: supported at-once/preemptible: audio %u/%u modem %u/%u video %u/%u GPU %u/%u\n",
+             tz.fast[0], tz.slow[0], tz.fast[1], tz.slow[1], tz.fast[2], tz.slow[2], tz.fast[3], tz.slow[3]);
++        if (zap_enabled == 1) {
++            printf("SURYA ZAP: %s stage=%d code=%d answer=%#llx header=%u code=%u region %#x->%#x\n",
++                zap.asked ? "RAN" : "NOT RUN", zap.stage, zap.code, zap.answer, zap.header_size, zap.code_size,
++                zap.region_before, zap.region_after);
++            printf("SURYA ZAP: %s; given back: %s\n",
++                zap.authenticated ? "TRUSTZONE AUTHENTICATED THE ZAP SHADER" : "NOT AUTHENTICATED",
++                zap.released ? "yes" : "no");
++        }
+         printf("No GPU commands submitted; Metal acceleration not enabled\n");
+         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
+         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
+diff --git a/bsd/dev/surya_zap.c b/bsd/dev/surya_zap.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_zap.c
+@@ -0,0 +1,218 @@
++/*
++ * SURYA G2: hand the Adreno 618's zap shader to TrustZone.
++ *
++ * The 3D core comes out of reset in "secure" mode and only TrustZone lets it out, when it is given
++ * the vendor's signed zap shader to authenticate. This is what Linux does (mdt_loader.c:
++ * qcom_mdt_pas_init, qcom_mdt_load; qcom_scm.c: qcom_scm_pas_*; adreno_gpu.c: zap_shader_load_mdt)
++ * and what the sequence of HakiOS (bsd/dev/hakios.adreno.c, steps 12 and 19; APSL 2.0) did on
++ * another Qualcomm phone:
++ *
++ *   1  the two images found (chosen/surya-zap-mdt and surya-zap-code, from the owner's own
++ *      /vendor/firmware: a615_zap.mdt and a615_zap.b02) and the .mdt checked to be what TrustZone takes:
++ *      the ELF header with its program headers, followed by the block of hashes and nothing else
++ *   2  the header put in a page of ours, in one piece, and cleaned out of the cache
++ *   3  TrustZone asked to give up a zap shader that an earlier kernel may have left (it says yes
++ *      with none, too)
++ *   4  PAS_INIT_IMAGE: the header handed over, the signature checked (image 13)
++ *   5  PAS_MEM_SETUP: TrustZone told where the image will be (the memory the device tree reserves:
++ *      reserved-memory gpu_region@97715000, two pages, no-map)
++ *   6  the code segment (the relocatable one, at the start of that memory) written there
++ *   7  PAS_AUTH_AND_RESET: authenticated and started
++ *   8  the shader given back, so that the next kernel starts from what the phone's own start leaves
++ *
++ * That the 3D core is out of secure mode with it cannot be seen until its command processor runs
++ * (G3). Only the owner's explicit boot-arg suryazap=1 runs this; every call is announced before it
++ * is made, so a hang or a silent reset shows where it was.
++ */
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
++#include <pexpert/device_tree.h>
++#include "surya_zap.h"
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
++
++#define ZAP_FAST                (1ull << 31)    /* answered at once; without it a call may be preempted */
++#define ZAP_64                  (1ull << 30)
++#define ZAP_SIP                 (2ull << 24)    /* a call of the SoC maker's, not an Arm standard one */
++#define ZAP_CALL(service, command) ((uint64_t)(service) << 8 | (command))
++#define ZAP_PAS_INIT_IMAGE      ZAP_CALL(2, 1)
++#define ZAP_PAS_MEM_SETUP       ZAP_CALL(2, 2)
++#define ZAP_PAS_AUTH_AND_RESET  ZAP_CALL(2, 5)
++#define ZAP_PAS_SHUTDOWN        ZAP_CALL(2, 6)
++#define ZAP_ONE_VALUE           1                       /* the argument-description word: one plain number */
++#define ZAP_THREE_VALUES        3                       /* three plain numbers */
++#define ZAP_VALUE_AND_BUFFER    (2 | 2 << 6)            /* a number and the address of memory it may read and write */
++#define ZAP_INTERRUPTED         1                       /* a preempted call says so, and is made again so */
++#define ZAP_PAS_GPU             13
++
++/* the device tree's reserved-memory gpu_region@97715000 */
++#define ZAP_REGION_PA           0x97715000ull
++#define ZAP_REGION_SIZE         0x2000u
++#define ZAP_SETUP_SIZE          0x1000u                 /* what Linux and HakiOS tell TrustZone for this image */
++
++/* One call: TrustZone's return (0 or an error of its own), and the word of answer. */
++static int32_t
++zap_scm(const char *what, uint64_t function, uint64_t arguments, uint64_t first, uint64_t second, uint64_t third,
++    uint64_t *answer)
++{
++	uint64_t session = 0;
++
++	printf("SURYA ZAP: asking TrustZone %s: smc %#llx, arguments %#llx, %#llx, %#llx\n", what, function, first, second,
++	    third);
++	delay(20000);   /* let the line reach the screen before anything can go wrong */
++	for (int i = 0; i < 100; i++) {
++		register uint64_t x0 __asm__("x0") = i == 0 ? function : ZAP_INTERRUPTED;
++		register uint64_t x1 __asm__("x1") = arguments;
++		register uint64_t x2 __asm__("x2") = first;
++		register uint64_t x3 __asm__("x3") = second;
++		register uint64_t x4 __asm__("x4") = third;
++		register uint64_t x5 __asm__("x5") = 0;
++		register uint64_t x6 __asm__("x6") = session;
++		register uint64_t x7 __asm__("x7") = 0;
++
++		__asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3), "+r" (x4), "+r" (x5), "+r" (x6),
++		    "+r" (x7) : : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
++		session = x6;
++		if (x0 != ZAP_INTERRUPTED) {
++			*answer = x1;
++			printf("SURYA ZAP: ... returns %d, answer %#llx\n", (int32_t)x0, x1);
++			delay(20000);
++			return (int32_t)x0;
++		}
++	}
++	printf("SURYA ZAP: ... keeps saying the call was interrupted\n");
++	return -1;
++}
++
++static bool
++zap_ok(int32_t result, uint64_t answer, struct surya_zap_report *r)
++{
++	r->code = result;
++	r->answer = answer;
++	return result == 0 && answer == 0;
++}
++
++void
++surya_zap_load(struct surya_zap_report *r)
++{
++	DTEntry chosen = NULL;
++	void const *mdt = NULL, *code = NULL;
++	unsigned int mdt_size = 0, code_size = 0;
++	uint64_t answer = ~0ull;
++	vm_offset_t page = 0;
++
++	r->asked = true;
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	    SecureDTGetProperty(chosen, "surya-zap-mdt", &mdt, &mdt_size) != kSuccess ||
++	    SecureDTGetProperty(chosen, "surya-zap-code", &code, &code_size) != kSuccess || !mdt || !code) {
++		printf("SURYA ZAP: asking nothing: the zap shader images are not in the device tree\n");
++		return;
++	}
++	r->stage = 1;
++	{
++		const uint8_t *h = mdt;
++		unsigned phnum = mdt_size >= 52 + 2 * 32 ? (unsigned)(h[44] | h[45] << 8) : 0;
++		uint32_t hashes = 0;
++
++		if (phnum >= 2) {
++			memcpy(&hashes, h + 52 + 32 + 16, sizeof(hashes));
++		}
++		if (memcmp(mdt, "\177ELF\1", 5) != 0 || phnum < 2 || mdt_size > PAGE_SIZE ||
++		    52 + 32 * phnum + (uint64_t)hashes != mdt_size || code_size == 0 || code_size > ZAP_SETUP_SIZE) {
++			printf("SURYA ZAP: asking nothing: the images are not what TrustZone takes (%u bytes, %u segments, %u hashes, "
++			    "code %u)\n", mdt_size, phnum, hashes, code_size);
++			return;
++		}
++	}
++	r->header_size = mdt_size;
++	r->code_size = code_size;
++
++	/* 2: the header in a page of ours, page-aligned and in one piece, and cleaned out of the cache */
++	if (kmem_alloc_contig(kernel_map, &page, PAGE_SIZE, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("SURYA ZAP: asking nothing: no memory for the header\n");
++		return;
++	}
++	memcpy((void *)page, mdt, mdt_size);
++	for (uintptr_t p = (uintptr_t)page; p < (uintptr_t)page + PAGE_SIZE; p += 64) {
++		__asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++	}
++	__asm__ volatile("dsb sy; isb" ::: "memory");
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)page);
++	if (!pn) {
++		printf("SURYA ZAP: asking nothing: the header's page has no physical address\n");
++		return;
++	}
++	uint64_t header_pa = ptoa_64(pn);
++	r->stage = 2;
++	printf("SURYA ZAP: the .mdt (%u bytes) is at physical %#llx\n", mdt_size, header_pa);
++	delay(20000);
++
++	/* 3: give up what an earlier kernel may have left */
++	(void)zap_scm("to give up a zap shader an earlier kernel may have left", ZAP_64 | ZAP_SIP | ZAP_PAS_SHUTDOWN,
++	    ZAP_ONE_VALUE, ZAP_PAS_GPU, 0, 0, &answer);
++	r->stage = 3;
++
++	/* 4: the signature */
++	answer = ~0ull;
++	if (!zap_ok(zap_scm("to take the zap shader's signature", ZAP_64 | ZAP_SIP | ZAP_PAS_INIT_IMAGE,
++	    ZAP_VALUE_AND_BUFFER, ZAP_PAS_GPU, header_pa, 0, &answer), answer, r)) {
++		return;
++	}
++	r->stage = 4;
++
++	/* 5: where the image will be */
++	answer = ~0ull;
++	if (!zap_ok(zap_scm("where the image will be", ZAP_64 | ZAP_SIP | ZAP_PAS_MEM_SETUP, ZAP_THREE_VALUES, ZAP_PAS_GPU,
++	    ZAP_REGION_PA, ZAP_SETUP_SIZE, &answer), answer, r)) {
++		return;
++	}
++	r->stage = 5;
++
++	/* 6: the code, at the start of the reserved memory (the memory is looked at only now: TrustZone has said it is ours to use) */
++	volatile uint32_t *region = (volatile uint32_t *)ml_io_map(ZAP_REGION_PA, ZAP_REGION_SIZE);
++	if (!region) {
++		printf("SURYA ZAP: the reserved memory cannot be mapped\n");
++		return;
++	}
++	r->region_before = region[0];
++	printf("SURYA ZAP: the reserved memory begins %#x; writing %u bytes at %#llx\n", r->region_before, code_size,
++	    ZAP_REGION_PA);
++	delay(20000);
++	{
++		const uint8_t *c = code;
++		for (uint32_t i = 0; i < ZAP_SETUP_SIZE / 4; i++) {
++			uint32_t word = 0;
++			for (uint32_t b = 0; b < 4; b++) {
++				uint32_t at = i * 4 + b;
++				word |= (uint32_t)(at < code_size ? c[at] : 0) << (8 * b);
++			}
++			region[i] = word;
++		}
++	}
++	__asm__ volatile("dsb sy; isb" ::: "memory");
++	r->region_after = region[0];
++	r->stage = 6;
++
++	/* 7: authenticated and started */
++	answer = ~0ull;
++	if (!zap_ok(zap_scm("to authenticate the zap shader and run it", ZAP_64 | ZAP_SIP | ZAP_PAS_AUTH_AND_RESET,
++	    ZAP_ONE_VALUE, ZAP_PAS_GPU, 0, 0, &answer), answer, r)) {
++		return;
++	}
++	r->authenticated = true;
++	r->stage = 7;
++	printf("SURYA ZAP: TRUSTZONE HAS AUTHENTICATED AND STARTED THE ZAP SHADER\n");
++
++	/* 8: given back */
++	answer = ~0ull;
++	r->released = zap_ok(zap_scm("to give the zap shader up again", ZAP_64 | ZAP_SIP | ZAP_PAS_SHUTDOWN,
++	    ZAP_ONE_VALUE, ZAP_PAS_GPU, 0, 0, &answer), answer, r);
++	r->stage = 8;
++}
++#endif
+diff --git a/bsd/dev/surya_zap.h b/bsd/dev/surya_zap.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_zap.h
+@@ -0,0 +1,21 @@
++/* SURYA G2: the Adreno 618 zap shader, handed to TrustZone to take the 3D core out of secure mode. */
++#ifndef SURYA_ZAP_H
++#define SURYA_ZAP_H
++#include <stdbool.h>
++#include <stdint.h>
++
++struct surya_zap_report {
++	bool     asked;                 /* the loader ran */
++	int      stage;                 /* the last step reached; see the steps in surya_zap.c */
++	int32_t  code;                  /* TrustZone's return for the call that stopped the run, else 0 */
++	uint64_t answer;                /* ... and its answer word */
++	uint32_t region_before;         /* first word of the reserved memory before the code went there */
++	uint32_t region_after;          /* ... and what reads back after */
++	uint32_t header_size;           /* bytes of the .mdt handed over */
++	uint32_t code_size;             /* bytes of the code segment written */
++	bool     authenticated;         /* TrustZone authenticated and started the shader */
++	bool     released;              /* ... and took it away again at the end */
++};
++
++void surya_zap_load(struct surya_zap_report *r);
++#endif
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -116,3 +116,4 @@
+ bsd/dev/surya_unixnu_smmu.c		standard
+ bsd/dev/surya_tz.c			standard
++bsd/dev/surya_zap.c			standard
+ bsd/dev/sweet_rpmh.c			standard
