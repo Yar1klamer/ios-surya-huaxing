@@ -1,0 +1,57 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -244,11 +244,14 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	ring[n++] = 0;                  /* no workarounds */
+ 	ring[n++] = 0;
+ 	ring[n++] = 0;
+-	ArmSmmu4KConfig config = {39, 36, tables_pa, 4};
++	/* the fourth member is the explicit budget of 4 KiB leaf pages to map (not table pages): the whole buffer */
++	ArmSmmu4KConfig config = {39, 36, tables_pa, G3_BYTES / 4096};
+ 	ArmSmmu4KRange range = {G3_IOVA, buf_pa, G3_BYTES, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2};
+ 	ArmSmmu4KResult built = {0};
+-	if (ArmSmmu4KBuild(&config, &range, 1, (uint64_t *)tables, 4, &built) != ArmSmmu4KSuccess) {
++	ArmSmmu4KStatus built_status = ArmSmmu4KBuild(&config, &range, 1, (uint64_t *)tables, 4, &built);
++	if (built_status != ArmSmmu4KSuccess) {
+ 		r->s2_stop = 4;
++		r->s2_code = (int)built_status;
+ 		return;
+ 	}
+ 	clean_to_memory(tables, 16384);
+@@ -272,8 +275,10 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	ArmSmmu4KProgramResult prog = {0};
+ 	printf("SURYA CORE: programming SMMU context bank 0 for the GPU's %#llx..+%#x\n", G3_IOVA, G3_BYTES);
+ 	delay(20000);
+-	if (ArmSmmu4KProgramDisabledContext(&io, 0, &context, 10000, &prog) != ArmSmmu4KSuccess || !prog.enabled) {
++	ArmSmmu4KStatus prog_status = ArmSmmu4KProgramDisabledContext(&io, 0, &context, 10000, &prog);
++	if (prog_status != ArmSmmu4KSuccess || !prog.enabled) {
+ 		r->s2_stop = 6;
++		r->s2_code = (int)prog_status;
+ 		return;
+ 	}
+ 
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -26,6 +26,7 @@ struct surya_gpu_core_report {
+ 
+ 	/* stage 2 (G3b): the command processor started from microcode and a ring the GPU reads through the SMMU */
+ 	int      s2_stop;               /* 0 = ran to the end; else which step stopped it (see stage2() in surya_gpu_core.c) */
++	int      s2_code;               /* the ArmSmmu4KStatus of the call that stopped it, for steps 4 and 6 */
+ 	uint32_t cb_sctlr, cb_fsr;      /* SMMU context bank 0 afterwards */
+ 	uint64_t cb_far;
+ 	uint32_t smr0, s2cr0;           /* stream 0 as attached */
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -496,8 +496,8 @@ surya_gpu_pt_diagnostic(void)
+                     core.diffs[i].wrote, core.diffs[i].read);
+         }
+         if (core_stage >= 2) {
+-            printf("SURYA CORE2: %s stop=%d SMMU SCTLR=%#x FSR=%#x FAR=%#llx SMR0=%#x S2CR0=%#x\n",
+-                core.done >= 2 ? "RAN" : "STOPPED", core.s2_stop, core.cb_sctlr, core.cb_fsr, core.cb_far, core.smr0, core.s2cr0);
++            printf("SURYA CORE2: %s stop=%d/%d SMMU SCTLR=%#x FSR=%#x FAR=%#llx SMR0=%#x S2CR0=%#x\n",
++                core.done >= 2 ? "RAN" : "STOPPED", core.s2_stop, core.s2_code, core.cb_sctlr, core.cb_fsr, core.cb_far, core.smr0, core.s2cr0);
+             printf("SURYA CORE2: CP ring rptr=%u wptr=%u %s RBBM_STATUS=%#x INT0=%#x HW_FAULT=%#x CP_INT=%#x ucode %#x %#x\n",
+                 core.rptr, core.wptr, (core.wptr && core.rptr == core.wptr) ? "CAUGHT UP" : "NOT CAUGHT UP",
+                 core.status_cp, core.int0, core.hw_fault, core.cp_int, core.sqe_word0, core.sqe_word1);

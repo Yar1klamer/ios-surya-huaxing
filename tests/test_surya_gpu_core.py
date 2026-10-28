@@ -120,5 +120,14 @@ class GpuCoreStage2Tests(unittest.TestCase):
             sqe.validate(path.read_bytes())
 
 
+class GpuCoreLeafBudgetTests(unittest.TestCase):
+    def test_leaf_budget_is_the_whole_buffer_in_4k_pages(self):
+        # patch 0102: ArmSmmu4KConfig's 4th member is the leaf-page budget, not a table-page count (0101 passed 4 for 128 KiB: Budget error)
+        text = (ROOT / 'xnu/patches/0102-surya-gpu-core-leaf-budget.patch').read_text()
+        added = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+        self.assertIn('ArmSmmu4KConfig config = {39, 36, tables_pa, G3_BYTES / 4096};', added)
+        self.assertIn('s2_code', added)
+
+
 if __name__ == '__main__':
     unittest.main()
