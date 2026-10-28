@@ -8,6 +8,9 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — образ `boot-mac-gpu-core2g.img` собран (патч 0108; ядро 22:47, sha256 0d61e941…; образ sha256 a1e64e92…)
+- Профиль `gpu-core2`; телефон в fastboot, ждёт «грузи». Смотреть: строки `extra stream …`, `N extra streams attached`, и ПОСЛЕДНЮЮ напечатанную строку перед возможной перезагрузкой (`CP_SQE_CNTL written` / `reading the SMMU fault registers` / `reading RBBM_STATUS` / `RBBM_STATUS …`).
+
 ## 2026-10-28 — патч 0108 написан (все четыре user-потока GPU + печати вокруг запуска CP); 100 тестов OK
 - После привязки потока 0: точные SMR (valid|id, маска 0 — такие принимаются) для ids 1, 0x400, 0x401 на следующих свободных группах, S2CR=0; в отчёт `SURYA CORE2: extra stream … SMR wrote/read S2CR`.
 - Между `CP_SQE_CNTL=1` и дальнейшими чтениями печати: `CP_SQE_CNTL written; waiting 5 ms`, `reading the SMMU fault registers`, `reading RBBM_STATUS (FSR …)`, `RBBM_STATUS …` — по последней строке перед перезагрузкой станет видно, где сброс (запуск / чтение SMMU / чтение GPU).
