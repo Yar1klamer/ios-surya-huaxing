@@ -8,6 +8,10 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — образ `boot-mac-gpu-core2e.img` собран (патч 0106; ядро 22:28, sha256 d7aa6cb3…; образ sha256 767a2745…)
+- Профиль `gpu-core2`; ждёт «грузи» владельца. Смотреть в отчёте: `5 ms after the CP start … FSR/FAR`, `fault syndrome FSYNR0/FSYNR1`, `catch page: N dwords changed` и `catch[off] = val`, `shadow rptr word`, `ring rptr … CAUGHT UP?`.
+
+
 ## 2026-10-28 — патч 0106 написан (G3b: ловушка на IOVA 0, адрес RPTR, замер при старте CP)
 - Содержимое: страница-«ловушка» 16 КиБ на IOVA 0 (заполнена `0xdeadbeef`, диапазоны SMMU отсортированы: ловушка первой, лимит листьев = (ловушка + буфер)/4К); `CP_RB_RPTR_ADDR` (0x2010) = замапленная страница scratch;
   замер `FSR/FAR/RBBM_STATUS` через 5 мс после `CP_SQE_CNTL=1` ДО записи указателя записи (видно: обращается ли GPU к адресу 0 уже при старте микрокода); после — `FSYNR0/1`, `GFSR`, слово shadow-rptr и список изменившихся слов ловушки.
