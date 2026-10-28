@@ -8,6 +8,9 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — образ `boot-mac-gpu-core2i.img` собран (патч 0110; ядро 23:07, sha256 17fd223d…); ждёт «грузи»
+- Профиль `gpu-core2` (zap включён). Смотреть: строка `SURYA ZAP: keeping the zap shader authenticated for the CP`, `SURYA CORE2: CP ring rptr=… wptr=11 …`, `CP_INT`, `before any command …`, и будет ли перезагрузка (и когда). Успех G3b = `CAUGHT UP` (rptr==wptr==11).
+
 ## 2026-10-28 — ИЗУЧЕНИЕ ДРАЙВЕРОВ: найдено вероятное объяснение сбросов; патч 0110 (подробно в `docs/driver-study.md`)
 - По исходникам KGSL (Xiaomi `surya-q-oss`): zap-шейдер грузится ДО `CP_SQE_CNTL=1` и остаётся загруженным всё время работы CP; после `CP_ME_INIT` идёт `CP_SET_SECURE_MODE 0`. Мы же в конце G2 отзываем zap (`PAS_SHUTDOWN`, патч 0099) и стартуем CP в secure-режиме БЕЗ zap — Linux в комментарии прямо предупреждает о нарушении прав. Это правдоподобная причина сбросов (ГИПОТЕЗА, не проверена запуском).
 - Патч 0110: при `suryacore>=2` zap остаётся авторизованным (`surya_zap_keep`), в кольцо после `CP_ME_INIT` добавлен `CP_SET_SECURE_MODE` с 0 (wptr=11). 104 теста OK. Сборка ядра и образ `core2i` следом.
