@@ -8,6 +8,12 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — офлайн-проверки перед запуском 0109 (по исходникам Linux, скачаны в `research/a6xx-src/`, в git не идёт)
+- **Микрокод в порядке (наблюдение по файлу):** `a630_sqe.fw` (sha256 36298bd5…, 32136 байт, 8034 dword); после пропуска первого dword (так делает `adreno_fw_create_bo`: `memcpy(ptr, &fw->data[4], size-4)`) `buf[0]=0x016ee19a`: `&0xfff = 0x19a ≥ 0x190` — проходит проверку версии Linux `a6xx_ucode_check_version` (`has_whereami = true`). Гипотеза «файл повреждён/не та версия» ОТВЕРГНУТА для файла; доставка в SQE через SMMU остаётся непроверенной.
+- Каталог Linux для A618 (0x06010800): прошивки `a630_sqe.fw`/`a630_gmu.bin`, `quirks = HAS_CACHED_COHERENT | 4GB_VA`, **нет `HAS_HW_APRIV`** → `CP_RB_CNTL` с `NO_UPDATE` (как у нас), `CP_APRIV_CNTL` не пишется; protect-таблица `a630_protect`.
+- Порядок Linux перед стартом CP: `CP_PROTECT_CNTL`+таблица (мы НЕ пишем), `RBBM_INT_0_MASK` (не пишем), `SQE_INSTR_BASE`, `RB_BASE`, `RB_CNTL`, shadow `RPTR_ADDR`, `CP_SQE_CNTL=1`, затем `CP_ME_INIT` (8 слов 0x2f,3,0x20000000,0…) — наш пакет совпадает. Отличия, способные влиять: (а) не запрограммирован `CP_PROTECT`; (б) у Linux для A618 GPU-доступ «cached coherent» (`HAS_CACHED_COHERENT`), у нас маппинг без когерентности + очистка кэша CPU.
+- Вывод: офлайн нашёл только перечисленные отличия, причину `CP_INT=0x80` не объясняет; решающим остаётся запуск 0109 (читает `CP_INT` до записи в кольцо).
+
 ## 2026-10-28 — образ `boot-mac-gpu-core2h.img` собран (патч 0109); ждёт «грузи»
 - Смотреть: `SURYA CORE2: before any command CP_INT=… HW_FAULT=… INT0=…` (0x80 уже до кольца → дефект микрокода/его доставки; 0 → виноват пакет ME_INIT), `extra stream … SMR … S2CR …`, и когда (через сколько) произойдёт самопроизвольная перезагрузка.
 
