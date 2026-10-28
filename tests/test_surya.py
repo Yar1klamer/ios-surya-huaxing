@@ -132,6 +132,10 @@ class SuryaTests(unittest.TestCase):
             self.assertIn('sweetkeys=0', cmd)
         self.assertIn('SURYA: PMIC key map matches live DT',
                       (ROOT / 'xnu/patches/0094-surya-pmic-keys.patch').read_text())
+        # the SURYA storage path (patch 0088) never reached sweet_keys_init(); 0094 starts it, explicit sweetkeys=1 only
+        patch = (ROOT / 'xnu/patches/0094-surya-pmic-keys.patch').read_text()
+        self.assertIn('keys_enabled == 1', patch)
+        self.assertIn('sweet_keys_init();', patch)
 
     def test_gpu_table_profile_preserves_root_and_other_gates(self):
         b = payload(apple=True)

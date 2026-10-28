@@ -16,3 +16,20 @@ diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
  #endif
  	int enabled = 1;
  	thread_t thread;
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -729,6 +729,13 @@ sweet_ufs_init(void)
+ 		printf("SURYA TOUCH: starting requested driver after root storage setup\n");
+ 		sweet_touch_init();
+ 	}
++	/* The PMIC key poller is read-only and needs the explicit sweetkeys=1. */
++	int keys_enabled = 0;
++	(void)PE_parse_boot_argn("sweetkeys", &keys_enabled, sizeof(keys_enabled));
++	if (su.writable && keys_enabled == 1) {
++		printf("SURYA KEYS: starting requested driver after root storage setup\n");
++		sweet_keys_init();
++	}
+ 	return 0;
+ #endif
+ 	sweet_log_start();
