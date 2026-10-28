@@ -146,6 +146,20 @@ class SuryaTests(unittest.TestCase):
         for forbidden in ('keys_write', '*(volatile uint32_t *)(keys_obs', 'keys_chnl'):
             self.assertNotIn(forbidden, body)
 
+    def test_backlight_switch_writes_one_register_and_reads_back(self):
+        # patch 0097: the only PMIC write is MOD_EN of the WLED control module, read back, after a probe
+        text = (ROOT / 'xnu/patches/0097-surya-backlight-switch.patch').read_text()
+        added = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+        self.assertIn('#define KEYS_WLED_MOD_EN    0x46u', added)
+        self.assertIn('back != want', added)
+        self.assertIn('keys_wled.broken = true', added)
+        writes = [l for l in added.splitlines() if 'keys_wled_put(' in l and 'uint8_t reg' not in l]
+        self.assertTrue(writes)
+        for line in writes:
+            self.assertIn('KEYS_WLED_MOD_EN', line)
+        self.assertEqual(added.count('keys_wled.ready = true'), 1)
+        self.assertIn('sweet_surya_backlight(off ? 0 : 1)', text)
+
     def test_gpu_table_profile_preserves_root_and_other_gates(self):
         b = payload(apple=True)
         cmd = surya.APPLE_GPU_PT_CMDLINE.encode()

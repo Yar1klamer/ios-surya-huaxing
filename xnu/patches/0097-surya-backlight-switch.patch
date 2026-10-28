@@ -1,0 +1,219 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -1,13 +1,15 @@
+ /*
+  * Minimal polled SWEET keys. Call once after the scheduler is running.
+  * See hw-report.md: volume-up is PM6150L SID 4, NOT PM6150 SID 0.
+- * PMIC access is READ ONLY: the sole MMIO write issues EXT_READL on an
+- * observer channel. No PMIC config, IRQ acknowledge or reset writes exist.
++ * PMIC access is READ ONLY for the keys: the MMIO writes of the key poller
++ * issue EXT_READL on an observer channel. The only PMIC write in this file is
++ * SURYA's backlight switch below (one bit of one register, read back).
+  */
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <sys/param.h>
+ #include <sys/systm.h>
+ #include <kern/clock.h>
++#include <kern/locks.h>
+ #include <kern/thread.h>
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+@@ -29,6 +31,9 @@ static uint16_t keys_pon_apid = KEYS_NO_APID, keys_gpio_apid = KEYS_NO_APID;
+ static uint32_t keys_version, keys_last_status;
+ static bool keys_started;
+ static int keys_sleep_chan;
++/* One transfer at a time through the arbiter: with two at once it drops one. */
++static LCK_GRP_DECLARE(keys_spmi_grp, "sweet-keys-spmi");
++static LCK_MTX_DECLARE(keys_spmi_lock, &keys_spmi_grp);
+ 
+ static uint32_t
+ keys_rd(vm_offset_t base, uint32_t off)
+@@ -57,7 +62,7 @@ keys_find_apid(uint16_t ppid, uint32_t count)
+ }
+ 
+ static bool
+-keys_read(uint16_t apid, uint16_t addr, uint8_t *out)
++keys_read_unlocked(uint16_t apid, uint16_t addr, uint8_t *out)
+ {
+ 	if (apid == KEYS_NO_APID) {
+ 		return false;
+@@ -81,6 +86,15 @@ keys_read(uint16_t apid, uint16_t addr, uint8_t *out)
+ 	return false;
+ }
+ 
++static bool
++keys_read(uint16_t apid, uint16_t addr, uint8_t *out)
++{
++	lck_mtx_lock(&keys_spmi_lock);
++	bool ok = keys_read_unlocked(apid, addr, out);
++	lck_mtx_unlock(&keys_spmi_lock);
++	return ok;
++}
++
+ static void
+ keys_wait(void)
+ {
+@@ -158,6 +172,119 @@ keys_dump_wled(uint32_t count)
+ }
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++/*
++ * Backlight switch of the IPS panel. Linux's qcom-wled.c turns a WLED5 backlight off by clearing
++ * bit 7 of MOD_EN (0x46) of the control module (and on by setting it); the brightness registers
++ * of the sink module keep their level, so the light comes back as it was. That one bit of one
++ * register is the only PMIC write here. It is made only if, at probe time, the firmware has left
++ * the module as a lit panel has it (control MOD_EN and sink MOD_A_EN both enabled) and the
++ * arbiter lets this system write that peripheral; each write is read back, a surprise ends all
++ * writing for the run, and the module is left on rather than off.
++ */
++#define KEYS_CHNLS_PA       0x0c600000u     /* write channels: 0x10000 per arbiter channel */
++#define KEYS_WLED_CTRL      0x5d8u
++#define KEYS_WLED_SINK      0x5d9u
++#define KEYS_WLED_MOD_EN    0x46u           /* control module, bit 7 */
++#define KEYS_WLED_MOD_A_EN  0x50u           /* sink module, bit 7 */
++#define KEYS_MOD_EN_BIT     0x80u
++#define KEYS_CH_COMMAND     0x00u
++#define KEYS_CH_STATUS      0x08u
++#define KEYS_CH_WDATA0      0x10u
++#define KEYS_CMD_WRITE      (0u << 27)      /* extended register write long, one byte */
++
++static struct {
++	uint16_t apid;
++	vm_offset_t chnl;
++	bool ready, broken;
++} keys_wled = { .apid = KEYS_NO_APID };
++
++/* One byte to a register of the WLED control module through our write channel, not yet read back. */
++static bool
++keys_wled_put(uint8_t reg, uint8_t value)
++{
++	bool ok = false;
++
++	if (!keys_wled.ready || ((keys_rd(keys_core, 0x900u + 4u * keys_wled.apid) >> 8) & 0xfffu) != KEYS_WLED_CTRL) {
++		return false;
++	}
++	lck_mtx_lock(&keys_spmi_lock);
++	for (unsigned tries = 0; tries < 3 && !ok; ++tries) {
++		uint32_t status = 0;
++		__asm__ volatile("dmb oshst" ::: "memory");
++		*(volatile uint32_t *)(keys_wled.chnl + KEYS_CH_WDATA0) = value;
++		*(volatile uint32_t *)(keys_wled.chnl + KEYS_CH_COMMAND) = KEYS_CMD_WRITE | ((uint32_t)reg << 4);
++		__asm__ volatile("dsb osh" ::: "memory");
++		for (unsigned i = 0; i < 2000; ++i) {
++			status = keys_rd(keys_wled.chnl, KEYS_CH_STATUS);
++			if (status & 1u) {
++				break;
++			}
++			delay(1);
++		}
++		if (!(status & 1u) || (status & 0x6u)) {
++			break;                          /* no answer, failed or denied: not asked again */
++		}
++		ok = !(status & 0x8u);                  /* a dropped write has not been made: asked again */
++	}
++	lck_mtx_unlock(&keys_spmi_lock);
++	return ok;
++}
++
++/* The switch: on != 0 lights the panel's backlight, 0 puts it out. 0 when it is as asked, else -1. */
++int
++sweet_surya_backlight(int on)
++{
++	uint8_t now = 0, want, back = 0;
++
++	if (!keys_wled.ready || keys_wled.broken) {
++		return -1;
++	}
++	if (!keys_read(keys_wled.apid, KEYS_WLED_MOD_EN, &now)) {
++		keys_wled.broken = true;
++		printf("SURYA WLED: MOD_EN unreadable; backlight left alone from now on\n");
++		return -1;
++	}
++	want = on ? (uint8_t)(now | KEYS_MOD_EN_BIT) : (uint8_t)(now & ~KEYS_MOD_EN_BIT);
++	if (want == now) {
++		return 0;
++	}
++	if (!keys_wled_put(KEYS_WLED_MOD_EN, want) || !keys_read(keys_wled.apid, KEYS_WLED_MOD_EN, &back) || back != want) {
++		keys_wled.broken = true;
++		printf("SURYA WLED: MOD_EN %#x -> %#x did not take (reads %#x); no more writes, backlight put back on\n", now, want, back);
++		(void)keys_wled_put(KEYS_WLED_MOD_EN, (uint8_t)(now | KEYS_MOD_EN_BIT));
++		return -1;
++	}
++	printf("SURYA WLED: backlight %s (MOD_EN %#x -> %#x)\n", on ? "on" : "off", now, back);
++	return 0;
++}
++
++static void
++keys_wled_probe(uint32_t count)
++{
++	uint16_t apid = keys_find_apid(KEYS_WLED_CTRL, count), sink = keys_find_apid(KEYS_WLED_SINK, count);
++	uint8_t mod = 0, mod_a = 0;
++
++	if (apid == KEYS_NO_APID || sink == KEYS_NO_APID || (keys_rd(keys_cnfg, 0x700u + 4u * apid) & 7u) != 0) {
++		printf("SURYA WLED: the control module is not ours to write; backlight switch off\n");
++		return;
++	}
++	if (!keys_read(apid, KEYS_WLED_MOD_EN, &mod) || !keys_read(sink, KEYS_WLED_MOD_A_EN, &mod_a) ||
++	    !(mod & KEYS_MOD_EN_BIT) || !(mod_a & KEYS_MOD_EN_BIT)) {
++		printf("SURYA WLED: MOD_EN=%#x MOD_A_EN=%#x is not a lit panel; backlight switch off\n", mod, mod_a);
++		return;
++	}
++	keys_wled.chnl = ml_io_map(KEYS_CHNLS_PA + 0x10000u * apid, 0x1000);
++	if (!keys_wled.chnl) {
++		printf("SURYA WLED: write channel mapping failed; backlight switch off\n");
++		return;
++	}
++	keys_wled.apid = apid;
++	keys_wled.ready = true;
++	printf("SURYA WLED: backlight switch ready (apid %u, MOD_EN=%#x, sink MOD_A_EN=%#x)\n", apid, mod, mod_a);
++}
++#endif
++
+ void
+ sweet_keys_init(void)
+ {
+@@ -214,6 +341,7 @@ sweet_keys_init(void)
+ 	}
+ #if defined(ARM64_BOARD_CONFIG_SURYA)
+ 	keys_dump_wled(count);
++	keys_wled_probe(count);
+ #endif
+ 	kern_return_t kr = kernel_thread_start(keys_thread, NULL, &thread);
+ 	if (kr == KERN_SUCCESS) {
+@@ -223,3 +351,14 @@ sweet_keys_init(void)
+ 	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
++
++#if !defined(ARM64_BOARD_CONFIG_SURYA)
++/* Boards with an AMOLED panel (sweet) have no backlight to switch: the framebuffer's fade is enough. */
++int sweet_surya_backlight(int on);
++int
++sweet_surya_backlight(int on)
++{
++	(void)on;
++	return -1;
++}
++#endif
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -37,6 +37,7 @@
+ #include "SweetSurface.h"
+ 
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
++extern "C" int sweet_surya_backlight(int on);   /* bsd/dev/sweet_keys.c; -1 where there is nothing to switch */
+ 
+ #if defined(SWEET)
+ #include <IOKit/IOService.h>
+@@ -543,6 +544,8 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 			}
+ 			IOLockUnlock(fFB->fLock);
+ 			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
++			/* An LCD's black pixels are still lit (SURYA): the backlight goes off and on too. */
++			(void)sweet_surya_backlight(off ? 0 : 1);
+ 		}
+ 		break;
+ 	case kSweetFBSwapWait:
