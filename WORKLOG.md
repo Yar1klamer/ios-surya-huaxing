@@ -8,6 +8,9 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — образ `boot-mac-gpu-core2f.img` собран (патч 0107; ядро 22:40, sha256 d4726361…; образ sha256 b3e5ff31…)
+- Профиль `gpu-core2`; телефон в fastboot, ждёт «грузи». Ожидание (гипотеза): `rptr` дойдёт до 9 (`CAUGHT UP`), `FSR=0x400`, ловушка не тронута. Если нет — смотреть `RBBM_STATUS`, `HW_FAULT`, `CP_INT`.
+
 ## 2026-10-28 — НАЙДЕНА ОШИБКА: `CP_SQE_INSTR_BASE` писался не в тот регистр (патч 0107)
 - Скачан `a6xx.xml` из Mesa (`research/a6xx-src/`, в git не идёт). Сверка с ним: `CP_SQE_INSTR_BASE` на A6xx = dword `0x830` = **байт `0x20c0`**; мы использовали `0x2058` — это смещение A8XX (dword `0x816`). Остальные CP-регистры (SQE_CNTL 0x2020, HW_FAULT 0x2084, INTERRUPT_STATUS 0x208c, ROQ/MEM_POOL/AHB) совпали.
 - Расшифровка `RBBM_STATUS` (бит0 CP_AHB_BUSY_CX_MASTER, бит2 CP_BUSY, бит4 VBIF_BUSY, бит22/23 GPU_BUSY_IGN_AHB*): `0x800005` = CP занят (SQE запущен), т.е. не «заблокирован», а исполняет мусор.
