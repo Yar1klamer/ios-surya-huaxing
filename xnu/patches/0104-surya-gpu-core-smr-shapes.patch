@@ -1,0 +1,118 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -308,19 +308,61 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	r->smr_maskmask = (*(volatile uint32_t *)(smmu + 0x800) >> 16) & 0x7fffu;
+ 	*(volatile uint32_t *)(smmu + 0x800) = 0;
+ 	__asm__ volatile("dsb osh" ::: "memory");
+-	const uint32_t want_mask = 0x401u & r->smr_maskmask;
+-	const uint32_t want_smr = (1u << 31) | (want_mask << 16) | ((uint32_t)SURYA_DT_USER_SID & r->smr_idmask);
+-	r->smr_want = want_smr;
+-	printf("SURYA CORE: attaching stream 0 to context bank 0: id bits %#x, mask bits %#x, writing SMR0 %#x\n", r->smr_idmask,
+-	    r->smr_maskmask, want_smr);
++	/*
++	 * The hardware ignored the DT's own value (valid, mask 0x401, id 0): writes of ID/MASK bits with the valid bit clear stick
++	 * (the probe above reads all 15 bits back) but making an entry valid with a mask that reaches bit 10 is dropped. ID0.NUMSIDB
++	 * (bits 12:9) says how many stream-id bits the SMMU really compares here: 3. So the match is cut to those bits (the user
++	 * context's ids 0 and 1), and a few shapes are tried in turn, each read back, until one holds.
++	 */
++	const unsigned numsidb = (u->id0 >> 9) & 0xfu;
++	const uint32_t sid_mask = (1u << numsidb) - 1u;
++	const uint32_t sid = (uint32_t)SURYA_DT_USER_SID;
++	const uint32_t shapes[3] = {
++		(1u << 31) | ((0x401u & sid_mask) << 16) | (sid & sid_mask),    /* the DT's match cut to the compared bits */
++		(1u << 31) | (sid & sid_mask),                                  /* the exact id, no mask */
++		(1u << 31) | (0x401u << 16) | sid,                              /* the DT's own, as 0103 wrote it */
++	};
++	const unsigned slot_list[3] = { 0, 1, 4 };
++	r->numsidb = numsidb;
++	r->attach_slot = -1;
++	printf("SURYA CORE: attaching stream 0 to context bank 0: NUMSIDB %u, trying SMR shapes %#x %#x %#x\n", numsidb, shapes[0],
++	    shapes[1], shapes[2]);
+ 	delay(20000);
+-	*(volatile uint32_t *)(smmu + 0xc00) = 0;                                       /* TYPE translate, CBNDX 0 */
+-	__asm__ volatile("dsb osh" ::: "memory");
+-	*(volatile uint32_t *)(smmu + 0x800) = want_smr;
+-	__asm__ volatile("dsb osh" ::: "memory");
+-	r->s2cr0 = *(volatile uint32_t *)(smmu + 0xc00);
+-	r->smr0 = *(volatile uint32_t *)(smmu + 0x800);
+-	if (r->s2cr0 != 0 || r->smr0 != want_smr) {
++	for (unsigned si = 0; si < 3 && r->attach_slot < 0; si++) {
++		const unsigned slot = slot_list[si];
++		if (slot >= slots) {
++			continue;
++		}
++		for (unsigned sh = 0; sh < (si == 0 ? 3u : 2u) && r->attach_slot < 0; sh++) {
++			*(volatile uint32_t *)(smmu + 0xc00 + 4 * slot) = 0;                    /* TYPE translate, CBNDX 0 */
++			__asm__ volatile("dsb osh" ::: "memory");
++			*(volatile uint32_t *)(smmu + 0x800 + 4 * slot) = shapes[sh];
++			__asm__ volatile("dsb osh" ::: "memory");
++			uint32_t s2 = *(volatile uint32_t *)(smmu + 0xc00 + 4 * slot);
++			uint32_t smr = *(volatile uint32_t *)(smmu + 0x800 + 4 * slot);
++			if (r->ntries < SURYA_CORE_TRIES) {
++				r->tries[r->ntries].slot = slot;
++				r->tries[r->ntries].wrote = shapes[sh];
++				r->tries[r->ntries].read = smr;
++				r->tries[r->ntries].s2cr = s2;
++				r->ntries++;
++			}
++			if (s2 == 0 && smr == shapes[sh]) {
++				r->attach_slot = (int)slot;
++				r->smr_want = shapes[sh];
++				r->smr0 = smr;
++				r->s2cr0 = s2;
++			} else {
++				*(volatile uint32_t *)(smmu + 0x800 + 4 * slot) = 0;            /* not taken: leave the entry invalid */
++				__asm__ volatile("dsb osh" ::: "memory");
++			}
++		}
++	}
++	r->gfsr_after = *(volatile uint32_t *)(smmu + 0x48);
++	r->gfsynr0 = *(volatile uint32_t *)(smmu + 0x50);
++	if (r->attach_slot < 0) {
++		r->smr0 = *(volatile uint32_t *)(smmu + 0x800);
++		r->s2cr0 = *(volatile uint32_t *)(smmu + 0xc00);
+ 		r->s2_stop = 7;
+ 		return;
+ 	}
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -5,6 +5,7 @@
+ #include <stdint.h>
+ 
+ #define SURYA_CORE_DIFFS 6
++#define SURYA_CORE_TRIES 8
+ #define SURYA_CORE_SLOTS 5      /* this SMMU's stream mapping groups (ID0 bits 7:0) */
+ 
+ struct surya_core_diff {
+@@ -33,6 +34,11 @@ struct surya_gpu_core_report {
+ 	uint32_t smr0, s2cr0;           /* stream 0 as attached */
+ 	uint32_t smr_idmask, smr_maskmask, smr_want;    /* the match register's implemented id and mask bits; what was written */
+ 	uint32_t scr1, gfsr;            /* SMMU global state when stage 2 looked */
++	uint32_t numsidb;               /* stream-id bits the SMMU compares (ID0 bits 12:9) */
++	uint32_t gfsr_after, gfsynr0;   /* global fault status and syndrome after the attempts: a blocked write may be recorded there */
++	int      attach_slot;           /* the match group that took stream 0, or -1 */
++	unsigned ntries;                /* the SMR shapes tried, in order, and what each read back */
++	struct { uint32_t slot, wrote, read, s2cr; } tries[SURYA_CORE_TRIES];
+ 	uint32_t smr_init[SURYA_CORE_SLOTS], s2cr_init[SURYA_CORE_SLOTS];       /* the groups before anything was written */
+ 	uint32_t rptr, wptr;            /* the ring after CP_ME_INIT */
+ 	uint32_t status_cp, int0, hw_fault, cp_int;
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -502,8 +502,12 @@ surya_gpu_pt_diagnostic(void)
+                 core.smr_init[0], core.smr_init[1], core.smr_init[2], core.smr_init[3], core.smr_init[4],
+                 core.s2cr_init[0], core.s2cr_init[1], core.s2cr_init[2], core.s2cr_init[3], core.s2cr_init[4],
+                 core.scr1, core.gfsr);
+-            printf("SURYA CORE2: match id bits %#x mask bits %#x, SMR0 wanted %#x read %#x\n", core.smr_idmask,
+-                core.smr_maskmask, core.smr_want, core.smr0);
++            printf("SURYA CORE2: probe id bits %#x mask bits %#x; NUMSIDB %u; stream 0 on group %d, SMR %#x\n", core.smr_idmask,
++                core.smr_maskmask, core.numsidb, core.attach_slot, core.smr_want);
++            printf("SURYA CORE2: after the tries GFSR=%#x GFSYNR0=%#x\n", core.gfsr_after, core.gfsynr0);
++            for (unsigned i = 0; i < core.ntries; i++)
++                printf("SURYA CORE2: try %u: group %u wrote SMR %#x read %#x (S2CR %#x)\n", i, core.tries[i].slot,
++                    core.tries[i].wrote, core.tries[i].read, core.tries[i].s2cr);
+             printf("SURYA CORE2: CP ring rptr=%u wptr=%u %s RBBM_STATUS=%#x INT0=%#x HW_FAULT=%#x CP_INT=%#x ucode %#x %#x\n",
+                 core.rptr, core.wptr, (core.wptr && core.rptr == core.wptr) ? "CAUGHT UP" : "NOT CAUGHT UP",
+                 core.status_cp, core.int0, core.hw_fault, core.cp_int, core.sqe_word0, core.sqe_word1);

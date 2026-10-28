@@ -149,5 +149,29 @@ class GpuCoreSmrProbeTests(unittest.TestCase):
             self.assertIn(name, self.src)
 
 
+class GpuCoreSmrShapesTests(unittest.TestCase):
+    def setUp(self):
+        text = (ROOT / 'xnu/patches/0104-surya-gpu-core-smr-shapes.patch').read_text()
+        self.src = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+    def test_match_is_cut_to_numsidb_bits(self):
+        # 0103's run: SMR0 valid|mask 0x401 was dropped (ID0 = 0x48016605: NUMSIDB = 3, mask bit 10 is out of range)
+        self.assertEqual((0x48016605 >> 9) & 0xf, 3)
+        self.assertIn('(u->id0 >> 9) & 0xfu', self.src)
+        self.assertIn('(0x401u & sid_mask) << 16', self.src)
+        # the DT's own value stays last, as a control
+        self.assertLess(self.src.index('(0x401u & sid_mask) << 16'), self.src.index('(0x401u << 16) | sid'))
+
+    def test_failed_entries_are_left_invalid_and_every_try_is_reported(self):
+        self.assertIn('leave the entry invalid', self.src)
+        self.assertIn('r->tries[r->ntries].read = smr;', self.src)
+        self.assertIn('try %u: group %u wrote SMR', self.src)
+        self.assertIn('GFSR', self.src)
+
+    def test_stage_stops_with_7_when_no_shape_holds(self):
+        self.assertIn('if (r->attach_slot < 0) {', self.src)
+        self.assertIn('r->s2_stop = 7;', self.src)
+
+
 if __name__ == '__main__':
     unittest.main()
