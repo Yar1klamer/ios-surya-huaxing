@@ -8,6 +8,14 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — GUI на 8 ядрах и план следующего этапа
+- `boot-smp8.img`: загрузка до экрана ~1 мин 27 с (наблюдение владельца; на 6 ядрах было ~1 мин, замер на глаз). Отклик быстрее, чем на 6 ядрах, "но вообще не очень"; работа **нестабильна** (подробности сбоев не собраны).
+- Владелец ставит приоритет: GPU, датчики, кнопки. Указал `oosexgang/hackios-xnu-kernel` как источник.
+- Разбор HakiOS (POCO X5 Pro, SM7325, другой SoC, поэтому адреса и регистры нельзя копировать без проверки): ядро в `xnu/files/bsd/dev/` — `hakios.buttons.c` (кнопки через SPMI-арбитр, только чтение), `hakios.adreno.c` (GPU, A642L), `hakios.cpufreq.c`, `hakios.adsp.c` (батарея/датчики через ADSP), `hakios.camera.c`. Лицензия: ядро — APSL 2.0, остальное — MIT; при переносе сохранять заголовки и указывать источник.
+- Кнопки на surya (из живого DT, наблюдение): SPMI-арбитр `qcom,spmi-pmic-arb` @0xc440000 (core 0x1100, chnls 0xc600000, obsrvr 0xe600000, intr 0xe700000, cnfg 0xc40a000), PMIC pm6150@0 и pm6150l@4, у обоих `qcom,power-on@800`; `gpio_keys` содержит только vol_up (GPIO 2, code 0x73). Питание и vol_down, по аналогии с HakiOS, вероятно PON KPDPWR/RESIN (гипотеза, проверить в DT/на железе).
+- Нестабильность 8 ядер: гипотеза — XNU видит A55 и A76 как однородные и нет cpufreq; не проверено. Пока основной образ — `boot-smp6.img`.
+- Порядок (предложение): 1) кнопки (малый риск, чтение), 2) GPU по этапам G1–G7, 3) датчики через ADSP/SSC, 4) cpufreq/стабильность параллельно.
+
 ## 2026-10-28 — 8/8 ядер (с A76) на железе (наблюдение, фото владельца)
 - `boot-smp8-diag.img` (sha256 503881e6...), `fastboot boot` 0.454s/5.094s. Консоль: `requested=8 selected=8`,
   cpu=6 (mpidr 0x600) и cpu=7 (0x700): `PSCI CPU_ON rc=0`, `came alive; SGI1 OK`, итог **`8/8 CPUs initialized, SGI1 verified`**.
