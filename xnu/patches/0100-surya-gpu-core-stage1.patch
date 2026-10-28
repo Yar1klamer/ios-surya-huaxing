@@ -1,0 +1,236 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_gpu_core.c
+@@ -0,0 +1,146 @@
++/*
++ * SURYA G3: the Adreno 618's 3D core.
++ *
++ * Stage 1 (suryacore=1), "G3a": the register setup Linux does in a6xx_hw_init (drivers/gpu/drm/msm/adreno/a6xx_gpu.c) before
++ * it starts the command processor, written one register at a time and read back. No command processor, no microcode, no
++ * memory the GPU would fetch: only the CPU's writes to the 3D core's registers, which needs the GX domain powered (G0) and
++ * shows whether such writes pass at all. Offsets are Linux's registers/adreno/a6xx.xml (dwords) times four; the values are
++ * Linux's for an A618 (a615 family: it has a GBIF, no A630 VBIF gate, GMEM 512 KiB, prim-FIFO threshold 0x00180000).
++ * Left out on purpose for now: hardware clock gating, UBWC configuration, CP protect ranges, performance-counter selects.
++ *
++ * Every write is announced before it is made, so a hang or a silent reset shows which register it was.
++ * Reads of the GPU never happen unless the owner's explicit boot-arg suryacore=N asks for this stage.
++ */
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include "surya_gpu_core.h"
++
++#define UCHE_TRAP_BASE_VALUE    0x1fffffffff000ull      /* a6xx_gpu_init: uche_trap_base */
++#define GMEM_BASE               0x100000ull             /* the GMEM window Linux sets: [1 MiB, 1 MiB + 512 KiB) */
++#define GMEM_SIZE               0x80000ull              /* A618 */
++
++struct reg {
++	const char *name;
++	uint32_t    offset;         /* bytes into the GPU block */
++	uint64_t    value;
++	bool        wide;           /* a 64-bit register: low dword at offset, high dword at offset + 4 */
++};
++
++/* The first part of a6xx_hw_init, in Linux's order. */
++static const struct reg stage1_regs[] = {
++	/* GBIF halt cleared (A618 has a GBIF), and the trusted-memory range disabled */
++	{ "GBIF_HALT", 0xf114, 0, false },
++	{ "RBBM_GBIF_HALT", 0x58, 0, false },
++	{ "RBBM_SECVID_TSB_CNTL", 0x3e00c, 0, false },
++	{ "RBBM_SECVID_TSB_TRUSTED_BASE", 0x3e000, 0, true },
++	{ "RBBM_SECVID_TSB_TRUSTED_SIZE", 0x3e008, 0, false },
++	/* 64-bit addressing for all blocks */
++	{ "CP_ADDR_MODE_CNTL", 0x2108, 1, false },
++	{ "VSC_ADDR_MODE_CNTL", 0x3004, 1, false },
++	{ "GRAS_ADDR_MODE_CNTL", 0x21804, 1, false },
++	{ "RB_ADDR_MODE_CNTL", 0x23814, 1, false },
++	{ "PC_ADDR_MODE_CNTL", 0x27804, 1, false },
++	{ "HLSQ_ADDR_MODE_CNTL", 0x2f814, 1, false },
++	{ "VFD_ADDR_MODE_CNTL", 0x29804, 1, false },
++	{ "VPC_ADDR_MODE_CNTL", 0x25804, 1, false },
++	{ "UCHE_ADDR_MODE_CNTL", 0x3800, 1, false },
++	{ "SP_ADDR_MODE_CNTL", 0x2b804, 1, false },
++	{ "TPL1_ADDR_MODE_CNTL", 0x2d804, 1, false },
++	{ "RBBM_SECVID_TSB_ADDR_MODE_CNTL", 0x3e040, 1, false },
++	/* bus QoS, performance counter masks, the UCHE */
++	{ "RBBM_VBIF_CLIENT_QOS_CNTL", 0x40, 3, false },
++	{ "RBBM_PERFCTR_GPU_BUSY_MASKED", 0x142c, 0xffffffffull, false },
++	{ "UCHE_WRITE_RANGE_MAX", 0x3814, UCHE_TRAP_BASE_VALUE + 0xfc0, true },
++	{ "UCHE_TRAP_BASE", 0x3824, UCHE_TRAP_BASE_VALUE, true },
++	{ "UCHE_WRITE_THRU_BASE", 0x381c, UCHE_TRAP_BASE_VALUE, true },
++	{ "UCHE_GMEM_RANGE_MIN", 0x382c, GMEM_BASE, true },
++	{ "UCHE_GMEM_RANGE_MAX", 0x3834, GMEM_BASE + GMEM_SIZE - 1, true },
++	{ "UCHE_FILTER_CNTL", 0x3860, 0x804, false },
++	{ "UCHE_CACHE_WAYS", 0x385c, 0x4, false },
++	/* command processor sizing, before it runs */
++	{ "CP_ROQ_THRESHOLDS_2", 0x2308, 0x010000c0, false },
++	{ "CP_ROQ_THRESHOLDS_1", 0x2304, 0x8040362c, false },
++	{ "CP_MEM_POOL_SIZE", 0x230c, 128, false },
++	{ "PC_DBG_ECO_CNTL", 0x27800, 0x00180000, false },
++	{ "CP_AHB_CNTL", 0x2634, 1, false },
++	{ "RBBM_PERFCTR_CNTL", 0x1400, 1, false },
++	{ "RBBM_INTERFACE_HANG_INT_CNTL", 0x7c, (1u << 30) | 0x1fffff, false },
++	{ "UCHE_CLIENT_PF", 0x3864, 0x81, false },
++};
++
++static inline uint32_t
++core_rd(vm_offset_t gpu, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(gpu + off);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return v;
++}
++
++static inline void
++core_wr(vm_offset_t gpu, uint32_t off, uint32_t val)
++{
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(gpu + off) = val;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static uint64_t
++core_rd_reg(vm_offset_t gpu, const struct reg *r)
++{
++	uint64_t v = core_rd(gpu, r->offset);
++	if (r->wide) {
++		v |= (uint64_t)core_rd(gpu, r->offset + 4) << 32;
++	}
++	return v;
++}
++
++static void
++core_wr_reg(vm_offset_t gpu, const struct reg *r)
++{
++	core_wr(gpu, r->offset, (uint32_t)r->value);
++	if (r->wide) {
++		core_wr(gpu, r->offset + 4, (uint32_t)(r->value >> 32));
++	}
++}
++
++static void
++stage1(vm_offset_t gpu, struct surya_gpu_core_report *r)
++{
++	for (unsigned i = 0; i < sizeof(stage1_regs) / sizeof(stage1_regs[0]); i++) {
++		const struct reg *g = &stage1_regs[i];
++		uint64_t back;
++
++		printf("SURYA CORE: writing %s (%#x) <- %#llx\n", g->name, g->offset, g->value);
++		delay(20000);   /* let the line reach the screen before the write can go wrong */
++		core_wr_reg(gpu, g);
++		back = core_rd_reg(gpu, g);
++		r->wrote++;
++		if (back == g->value) {
++			r->same++;
++		} else {
++			if (r->differ < SURYA_CORE_DIFFS) {
++				r->diffs[r->differ] = (struct surya_core_diff){ g->name, g->offset, g->value, back };
++			}
++			r->differ++;
++		}
++	}
++}
++
++void
++surya_gpu_core_run(vm_offset_t gpu, unsigned stage, struct surya_gpu_core_report *r)
++{
++	r->asked = true;
++	r->stage = stage;
++	r->status_before = core_rd(gpu, 0x840);
++	printf("SURYA CORE: stage %u; RBBM_STATUS=%#x before the first write\n", stage, r->status_before);
++	delay(20000);
++	if (stage >= 1) {
++		stage1(gpu, r);
++		r->done = 1;
++	}
++	r->status_after = core_rd(gpu, 0x840);
++	printf("SURYA CORE: stage %u done; RBBM_STATUS=%#x\n", r->done, r->status_after);
++}
++#endif
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_gpu_core.h
+@@ -0,0 +1,30 @@
++/* SURYA G3: the Adreno 618's 3D core, brought up one checked step at a time. */
++#ifndef SURYA_GPU_CORE_H
++#define SURYA_GPU_CORE_H
++#include <stdbool.h>
++#include <stdint.h>
++
++#define SURYA_CORE_DIFFS 6
++
++struct surya_core_diff {
++	const char *name;
++	uint32_t    offset;
++	uint64_t    wrote;
++	uint64_t    read;
++};
++
++struct surya_gpu_core_report {
++	bool     asked;
++	unsigned stage;                 /* the stage requested (suryacore=N) */
++	unsigned done;                  /* the stage reached */
++	uint32_t status_before;         /* RBBM_STATUS before anything was written */
++	uint32_t status_after;          /* ... and after */
++	unsigned wrote;                 /* registers written */
++	unsigned same;                  /* ... and read back as written */
++	unsigned differ;                /* ... and read back otherwise (not a failure: many bits are write-only or masked) */
++	struct surya_core_diff diffs[SURYA_CORE_DIFFS];
++};
++
++/* Runs the steps up to `stage` against the powered GPU block mapped at `gpu`. */
++void surya_gpu_core_run(vm_offset_t gpu, unsigned stage, struct surya_gpu_core_report *r);
++#endif
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -13,6 +13,7 @@
+ #include "surya_unixnu_smmu.h"
+ #include "surya_tz.h"
+ #include "surya_zap.h"
++#include "surya_gpu_core.h"
+ 
+ extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+@@ -422,6 +423,15 @@ surya_gpu_pt_diagnostic(void)
+     (void)PE_parse_boot_argn("suryazap", &zap_enabled, sizeof(zap_enabled));
+     if (zap_enabled == 1 && tz.answers) surya_zap_load(&zap);
+ 
++    /* G3: the 3D core, one stage at a time: only with the explicit suryacore=N, and only with the GX domain powered. */
++    struct surya_gpu_core_report core = {0};
++    int core_stage = 0;
++    (void)PE_parse_boot_argn("suryacore", &core_stage, sizeof(core_stage));
++    if (core_stage > 0 && st.gx_powered) {
++        vm_offset_t core_regs = ml_io_map(SURYA_GPU_PA, SURYA_GPU_SIZE);
++        if (core_regs) surya_gpu_core_run(core_regs, (unsigned)core_stage, &core);
++    }
++
+     for (;;) {
+         disableConsoleOutput = sweet_console_muted = 0;
+         printf("\nSURYA GPU PAGE TABLE DIAGNOSTIC: %s code=%d\n",
+@@ -474,6 +484,14 @@ surya_gpu_pt_diagnostic(void)
+                 zap.authenticated ? "TRUSTZONE AUTHENTICATED THE ZAP SHADER" : "NOT AUTHENTICATED",
+                 zap.released ? "yes" : "no");
+         }
++        if (core_stage > 0) {
++            printf("SURYA CORE: %s stage=%u/%u wrote=%u same=%u differ=%u RBBM_STATUS %#x->%#x\n",
++                core.asked ? "RAN" : "NOT RUN", core.done, core.stage, core.wrote, core.same, core.differ,
++                core.status_before, core.status_after);
++            for (unsigned i = 0; i < core.differ && i < SURYA_CORE_DIFFS; i++)
++                printf("SURYA CORE: DIFF %s @%#x wrote %#llx read %#llx\n", core.diffs[i].name, core.diffs[i].offset,
++                    core.diffs[i].wrote, core.diffs[i].read);
++        }
+         printf("No GPU commands submitted; Metal acceleration not enabled\n");
+         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
+         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -117,3 +117,4 @@
+ bsd/dev/surya_tz.c			standard
+ bsd/dev/surya_zap.c			standard
++bsd/dev/surya_gpu_core.c		standard
+ bsd/dev/sweet_rpmh.c			standard

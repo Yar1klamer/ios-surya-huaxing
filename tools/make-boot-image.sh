@@ -4,8 +4,8 @@
 # Never touches the phone: the result is only for "fastboot boot".
 #
 # Usage: tools/make-boot-image.sh KERNEL PROFILE OUT.img [CPUS]
-#   PROFILE  gui | touch | gpu | gpu-zap | diag    (gui = muted console, touch = visible console, gpu = GPU page-table diagnostic,
-#                                                   gpu-zap = gpu + the zap shader handed to TrustZone, diag = daemon-stderr diagnostic)
+#   PROFILE  gui | touch | gpu | gpu-zap | gpu-core1..3 | diag    (gui = muted console, touch = visible console, gpu = GPU page-table diagnostic,
+#                                                   gpu-zap = gpu + the zap shader handed to TrustZone, gpu-core1..3 = gpu-zap + the 3D core up to stage N, diag = daemon-stderr diagnostic)
 #   CPUS     boot CPU count, default 6 (8 is not stable)
 set -euo pipefail
 [ $# -ge 3 ] || { sed -n 2,11p "$0"; exit 1; }
@@ -22,6 +22,7 @@ case "$PROFILE" in
 	touch)    ARGS=(--touch-diagnostic) ;;
 	gpu)      ARGS=(--gpu-table-diagnostic) ;;
 	gpu-zap)  ARGS=(--gpu-zap-diagnostic --zap-dir "$FW") ;;
+	gpu-core[1-3]) ARGS=(--gpu-core-stage "${PROFILE#gpu-core}" --zap-dir "$FW") ;;
 	diag)     ARGS=(--diagnostic) ;;
 	*) echo "unknown profile $PROFILE" >&2; exit 1 ;;
 esac

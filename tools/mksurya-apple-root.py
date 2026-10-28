@@ -23,9 +23,14 @@ p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before
 p.add_argument('--cpus', type=int, default=1, help='boot CPU count (1..8); must equal the ADT CPU node count (surya.py --cpus)')
 
 p.add_argument('--gpu-zap-diagnostic', action='store_true', help='GPU page-table diagnostic that also hands the pinned zap shader to TrustZone (needs --zap-dir)')
+p.add_argument('--gpu-core-stage', type=int, default=0, help='G3: run the 3D core up to this stage (needs --zap-dir; implies the zap profile)')
 p.add_argument('--zap-dir', type=Path, help='directory with the pinned a615_zap.mdt and a615_zap.b02')
 
 a = p.parse_args()
+if a.gpu_core_stage:
+    if a.gpu_core_stage not in surya.GPU_CORE_STAGES:
+        raise SystemExit('--gpu-core-stage must be one of %s' % (surya.GPU_CORE_STAGES,))
+    a.gpu_zap_diagnostic = True
 if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic, a.gpu_zap_diagnostic)) > 1:
     raise SystemExit('select only one boot profile')
 if a.gpu_zap_diagnostic != bool(a.zap_dir):
@@ -36,7 +41,7 @@ if b'SURYA: bounded Apple root writes armed' not in kernel:
 m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
-cmdline = surya.APPLE_GPU_ZAP_CMDLINE if a.gpu_zap_diagnostic else surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
+cmdline = surya.gpu_core_cmdline(a.gpu_core_stage) if a.gpu_core_stage else surya.APPLE_GPU_ZAP_CMDLINE if a.gpu_zap_diagnostic else surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
 cmdline = surya.with_cpus(cmdline, a.cpus)
 if (a.gpu_table_diagnostic or a.gpu_zap_diagnostic) and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
@@ -63,6 +68,8 @@ if a.touch_firmware or a.gmu_firmware or a.zap_dir:
         if len(gmu_fw) != 32768:
             raise SystemExit(f'invalid GMU firmware size: {len(gmu_fw)}')
         surya.setprop(chosen, 'surya-gmu-firmware', gmu_fw)
+    if a.gpu_core_stage and b'SURYA CORE: writing' not in kernel:
+        raise SystemExit('kernel lacks the SURYA 3D core stage')
     if a.zap_dir:
         import surya_zap_firmware
         if b'SURYA ZAP: asking' not in kernel:

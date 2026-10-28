@@ -36,6 +36,17 @@ APPLE_GPU_PT_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetf
                         ' suryagpummu=1')
 # G2: the GPU page-table diagnostic plus handing the zap shader to TrustZone (patch 0099). The only profile that does.
 APPLE_GPU_ZAP_CMDLINE = APPLE_GPU_PT_CMDLINE + ' suryazap=1'
+# G3: the 3D core, one stage per boot (patch 0100 and later); carries the zap images too.
+GPU_CORE_STAGES = (1, 2, 3)
+
+
+def gpu_core_cmdline(stage):
+    if stage not in GPU_CORE_STAGES:
+        raise ValueError('unknown 3D core stage %r' % (stage,))
+    return APPLE_GPU_ZAP_CMDLINE + ' suryacore=%d' % stage
+
+
+APPLE_GPU_CORE_CMDLINES = tuple(gpu_core_cmdline(n) for n in GPU_CORE_STAGES)
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 
@@ -168,7 +179,7 @@ def validate_payload(blob):
     # Validate the same contract used by ADT generation, including address limits.
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
-    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE, APPLE_GPU_ZAP_CMDLINE) if apple_root else (CMDLINE,)
+    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE, APPLE_GPU_ZAP_CMDLINE) + APPLE_GPU_CORE_CMDLINES if apple_root else (CMDLINE,)
     # Only the cpus=N value may differ, and it must match the ADT's CPU nodes.
     m_cpus = re.search(r'\bcpus=(\d+)', cmd)
     if m_cpus is None or with_cpus(cmd, 1) not in allowed_cmdlines:

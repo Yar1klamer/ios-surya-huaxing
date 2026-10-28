@@ -30,10 +30,14 @@ class Tree:
                 raise ValueError('invalid or duplicate phandle')
             self.handles[value[0]] = path.parent
 
+    def _rel(self, path):
+        # macOS temp dirs live under /var, a link to /private/var: compare resolved paths
+        return Path(path).resolve().relative_to(self.root)
+
     def read(self, node, prop):
         path = node / prop
         data = path.read_bytes()
-        self.evidence[str(path.relative_to(self.root)).replace('\\', '/')] = hashlib.sha256(data).hexdigest()
+        self.evidence[str(self._rel(path)).replace('\\', '/')] = hashlib.sha256(data).hexdigest()
         return data
 
     def u32(self, node, prop):
@@ -43,7 +47,7 @@ class Tree:
         return values[0]
 
     def path(self, node):
-        return '/' + node.relative_to(self.root).as_posix()
+        return '/' + self._rel(node).as_posix()
 
     def references(self, node, prop, count_prop):
         values = cells(self.read(node, prop))
