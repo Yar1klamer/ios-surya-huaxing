@@ -137,6 +137,15 @@ class SuryaTests(unittest.TestCase):
         self.assertIn('keys_enabled == 1', patch)
         self.assertIn('sweet_keys_init();', patch)
 
+    def test_wled_readout_patch_is_read_only(self):
+        # patch 0095 only reads the backlight's WLED registers; any write needs its own reviewed patch
+        added = [l[1:] for l in (ROOT / 'xnu/patches/0095-surya-wled-readout.patch').read_text().splitlines()
+                 if l.startswith('+') and not l.startswith('+++')]
+        body = chr(10).join(added)
+        self.assertIn('keys_read(apid', body)
+        for forbidden in ('keys_write', '*(volatile uint32_t *)(keys_obs', 'keys_chnl'):
+            self.assertNotIn(forbidden, body)
+
     def test_gpu_table_profile_preserves_root_and_other_gates(self):
         b = payload(apple=True)
         cmd = surya.APPLE_GPU_PT_CMDLINE.encode()
