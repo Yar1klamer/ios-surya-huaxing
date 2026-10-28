@@ -7,6 +7,12 @@ steering: "remember just do that it works with poco x3 nfc". Work here, in
 `C:/Users/Arbuxik/Documents/ChatGPT/ios-surya-from-sweet`, branch `codex/surya-port`.
 Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
+## START HERE (2026-10-28): полная передача дел — `docs/HANDOFF.md`
+Подробно и по порядку: устройство телефона, цепочка загрузки, как собираются ядро/образы (хакинтош, macOS 15 Intel, Xcode 15.4), список патчей 0001–0103,
+что подтверждено на железе, где остановились (G3b: привязка потока SMMU, образ `boot-mac-gpu-core2c.img` ждёт «грузи» владельца), дерево решений и дальнейшие этапы G3c–G7,
+остальные направления (лаги/cpufreq, датчики, камеры), поправки к старым заметкам (панель Huaxing, не Tianma), правила работы с владельцем и шпаргалка команд.
+
+
 ## 2026-10-28 handoff addendum (Claude Sonnet 5.5; details in WORKLOG.md)
 - THIS owner's phone is the **Huaxing** NT36672C variant (live bootargs `androidboot.lcmtype=dsi_nt36672c_huaxing_fhd_video_display`). Earlier
   notes below that say the captured bootargs identify a Tianma panel describe the upstream/other variant: the Tianma firmware was used because the fork
