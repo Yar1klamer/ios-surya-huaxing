@@ -8,6 +8,17 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — SMP на железе: 6 ядер подняты (наблюдение, фото владельца)
+- Образ `boot-smp6-diag.img` (sha256 afefb95a...), `fastboot boot`, Sending 0.450s / Booting 5.093s. Без записи разделов.
+  (Телефон был в fastbootd из recovery — `boot` там не работает; `fastboot reboot bootloader` помог.)
+- Фото консоли: `SWEET CPU: requested=6 selected=6 (limit=8)`, для cpu=1..5 `PSCI CPU_ON rc=0` (target 0x100..0x500,
+  entry_pa=0x101492000), `cpu=N mpidr=0x.. came alive; SGI1 OK`, итог **`6/6 CPUs initialized, SGI1 verified`**.
+  Ядро дальше грузится, потом отчёт тача (повторяется каждые 20 с, launchd на паузе — это диагностический профиль).
+- Видно также `debug_log_init: Error!! gPanicBase is still not initialized` (дважды) и `kdp_core zlib memory 0x8000`;
+  загрузка при этом продолжилась (отчёт тача появляется позже). Это сообщение уже встречалось раньше; область лога паники
+  намеренно убрана из ADT (см. запись про слияние), оставлено как TODO.
+- НЕ проверено: A76 (cpus=7..8), отклик GUI/лаги (нужен `boot-smp6.img`), стабильность под нагрузкой.
+
 ## 2026-10-28 — SMP-образы собраны (на хосте project-make, не загружены)
 - Linux-хост `burmalda@192.168.1.112` (4 ядра, 7 ГБ): вход по отдельному ключу `~/.ssh/id_claude_surya` (без фразы;
   добавлен владельцем). Есть clang, aarch64-linux-gnu-gcc, dtc, mkbootimg (~/mkbootimg), старая сборка в ~/surya-build.
