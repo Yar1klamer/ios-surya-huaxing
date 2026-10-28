@@ -1,0 +1,162 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -150,9 +150,12 @@ stage1(vm_offset_t gpu, struct surya_gpu_core_report *r)
+ #define G3_RING_OFF     0x08000u
+ #define G3_RING_BYTES   0x08000u        /* MSM_GPU_RINGBUFFER_SZ */
+ #define G3_SCRATCH_OFF  0x10000u
++#define CATCH_BYTES     0x4000u         /* the catch page at IOVA 0: one kernel page */
++#define CATCH_PATTERN   0xdeadbeefu
+ 
+ #define CP_RB_BASE      0x2000u
+ #define CP_RB_CNTL      0x2008u
++#define CP_RB_RPTR_ADDR 0x2010u
+ #define CP_RB_RPTR      0x2018u
+ #define CP_RB_WPTR      0x201cu
+ #define CP_SQE_CNTL     0x2020u
+@@ -265,7 +268,7 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	DTEntry chosen = NULL;
+ 	void const *sqe = NULL;
+ 	unsigned int sqe_size = 0;
+-	vm_offset_t buf = 0, tables = 0;
++	vm_offset_t buf = 0, tables = 0, catch_buf = 0;
+ 	ArmSmmu4KIo io;
+ 
+ 	if (u == NULL || u->stage != 3 || u->code != 0 || u->cb_offset != SURYA_DT_USER_CB_OFFSET) {
+@@ -281,12 +284,15 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	    kmem_alloc_contig(kernel_map, &buf, G3_BYTES, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
+ 	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
+ 	    kmem_alloc_contig(kernel_map, &tables, 16384, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS ||
++	    kmem_alloc_contig(kernel_map, &catch_buf, CATCH_BYTES, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
+ 	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 		r->s2_stop = 3;
+ 		return;
+ 	}
+ 	ppnum_t bpn = pmap_find_phys(kernel_pmap, (addr64_t)buf), tpn = pmap_find_phys(kernel_pmap, (addr64_t)tables);
+-	if (!bpn || !tpn) {
++	ppnum_t cpn = pmap_find_phys(kernel_pmap, (addr64_t)catch_buf);
++	if (!bpn || !tpn || !cpn) {
+ 		r->s2_stop = 3;
+ 		return;
+ 	}
+@@ -308,10 +314,22 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	ring[n++] = 0;
+ 	ring[n++] = 0;
+ 	/* the fourth member is the explicit budget of 4 KiB leaf pages to map (not table pages): the whole buffer */
+-	ArmSmmu4KConfig config = {39, 36, tables_pa, G3_BYTES / 4096};
+-	ArmSmmu4KRange range = {G3_IOVA, buf_pa, G3_BYTES, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2};
++	/*
++	 * The 0105 run: the CP started and the SMMU context took a translation fault at address 0 (FSR 0x40000402, FAR 0), which
++	 * stalls the transaction. Something of the GPU's reads or writes address 0 by default; a catch page there, pre-filled with a
++	 * pattern, lets it through and shows afterwards what was done to it. Sorted ranges: the catch at 0 first.
++	 */
++	const uint64_t buf_cpa = ptoa_64(cpn);
++	ArmSmmu4KConfig config = {39, 36, tables_pa, (CATCH_BYTES + G3_BYTES) / 4096};
++	ArmSmmu4KRange ranges[2] = {
++		{0, buf_cpa, CATCH_BYTES, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
++		{G3_IOVA, buf_pa, G3_BYTES, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
++	};
++	for (unsigned i = 0; i < CATCH_BYTES / 4; i++) {
++		((volatile uint32_t *)catch_buf)[i] = CATCH_PATTERN;
++	}
+ 	ArmSmmu4KResult built = {0};
+-	ArmSmmu4KStatus built_status = ArmSmmu4KBuild(&config, &range, 1, (uint64_t *)tables, 4, &built);
++	ArmSmmu4KStatus built_status = ArmSmmu4KBuild(&config, ranges, 2, (uint64_t *)tables, 4, &built);
+ 	if (built_status != ArmSmmu4KSuccess) {
+ 		r->s2_stop = 4;
+ 		r->s2_code = (int)built_status;
+@@ -319,6 +337,7 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	}
+ 	clean_to_memory(tables, 16384);
+ 	clean_to_memory(buf, G3_BYTES);         /* the GPU reads memory, not this processor's cache */
++	clean_to_memory(catch_buf, CATCH_BYTES);
+ 
+ 	/* context bank 0: programmed with those tables (capture() left it disabled), then enabled by the library after read-back */
+ 	vm_offset_t smmu = ml_io_map(SURYA_DT_SMMU_PA, SURYA_DT_SMMU_SIZE);
+@@ -438,10 +457,16 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	delay(20000);
+ 	core_wr64(gpu, CP_SQE_INSTR_BASE, G3_IOVA + G3_SQE_OFF);
+ 	core_wr64(gpu, CP_RB_BASE, G3_IOVA + G3_RING_OFF);
++	core_wr64(gpu, CP_RB_RPTR_ADDR, G3_IOVA + G3_SCRATCH_OFF);      /* where the CP may write its read pointer: a mapped page */
+ 	core_wr(gpu, CP_RB_CNTL, RB_CNTL_VALUE);
+ 	printf("SURYA CORE: starting the command processor (CP_SQE_CNTL)\n");
+ 	delay(20000);
+ 	core_wr(gpu, CP_SQE_CNTL, 1);
++	delay(5000);            /* before any command: does the CP touch memory at start-up alone? */
++	r->fsr_start = *(volatile uint32_t *)(smmu + u->cb_offset + 0x58);
++	r->far_start = *(volatile uint32_t *)(smmu + u->cb_offset + 0x60) |
++	    ((uint64_t)*(volatile uint32_t *)(smmu + u->cb_offset + 0x64) << 32);
++	r->status_start = core_rd(gpu, RBBM_STATUS);
+ 	printf("SURYA CORE: CP_ME_INIT: write pointer to %u\n", n);
+ 	delay(20000);
+ 	core_wr(gpu, CP_RB_WPTR, n);
+@@ -461,6 +486,28 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	r->cb_fsr = *(volatile uint32_t *)(smmu + u->cb_offset + 0x58);
+ 	r->cb_far = *(volatile uint32_t *)(smmu + u->cb_offset + 0x60) |
+ 	    ((uint64_t)*(volatile uint32_t *)(smmu + u->cb_offset + 0x64) << 32);
++	r->cb_fsynr0 = *(volatile uint32_t *)(smmu + u->cb_offset + 0x68);
++	r->cb_fsynr1 = *(volatile uint32_t *)(smmu + u->cb_offset + 0x6c);
++	r->gfsr_end = *(volatile uint32_t *)(smmu + 0x48);
++	/* what the GPU did to the catch page and the scratch page (read past the CPU cache) */
++	for (uintptr_t p = (uintptr_t)catch_buf; p < (uintptr_t)catch_buf + CATCH_BYTES; p += 64) {
++		__asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
++	}
++	for (uintptr_t p = (uintptr_t)buf + G3_SCRATCH_OFF; p < (uintptr_t)buf + G3_SCRATCH_OFF + 64; p += 64) {
++		__asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++	r->scratch0 = ((volatile uint32_t *)(buf + G3_SCRATCH_OFF))[0];
++	for (unsigned i = 0; i < CATCH_BYTES / 4; i++) {
++		uint32_t word = ((volatile uint32_t *)catch_buf)[i];
++		if (word != CATCH_PATTERN) {
++			if (r->catch_hits < SURYA_CORE_CATCH) {
++				r->catch_off[r->catch_hits] = i * 4;
++				r->catch_val[r->catch_hits] = word;
++			}
++			r->catch_hits++;
++		}
++	}
+ 	printf("SURYA CORE: ring read pointer %u of %u, SMMU FSR %#x\n", r->rptr, n, r->cb_fsr);
+ 	core_wr(gpu, CP_SQE_CNTL, 0);           /* stop the CP again: nothing else is going to feed it */
+ }
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -6,6 +6,7 @@
+ 
+ #define SURYA_CORE_DIFFS 6
+ #define SURYA_CORE_TRIES 8
++#define SURYA_CORE_CATCH 6
+ #define SURYA_CORE_SLOTS 5      /* this SMMU's stream mapping groups (ID0 bits 7:0) */
+ 
+ struct surya_core_diff {
+@@ -39,6 +40,12 @@ struct surya_gpu_core_report {
+ 	int      attach_slot;           /* the match group that took stream 0, or -1 */
+ 	unsigned ntries;                /* the SMR shapes tried, in order, and what each read back */
+ 	struct { uint32_t slot, wrote, read, s2cr; } tries[SURYA_CORE_TRIES];
++	/* 0106: the SMMU state 5 ms after the CP start (before any command), the fault syndrome, what landed in the catch page at IOVA 0 */
++	uint32_t fsr_start, status_start;
++	uint64_t far_start;
++	uint32_t cb_fsynr0, cb_fsynr1, gfsr_end, scratch0;
++	unsigned catch_hits;            /* dwords of the catch page that changed from the pattern */
++	uint32_t catch_off[SURYA_CORE_CATCH], catch_val[SURYA_CORE_CATCH];
+ 	/* the experiments run when no shape was taken (smr_dive in surya_gpu_core.c) */
+ 	bool     dived;
+ 	uint32_t dive_fault_valid, dive_smr_first, dive_late[3], dive_wide, dive_bypass;
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -515,6 +515,12 @@ surya_gpu_pt_diagnostic(void)
+             for (unsigned i = 0; i < core.ntries; i++)
+                 printf("SURYA CORE2: try %u: group %u wrote SMR %#x read %#x (S2CR %#x)\n", i, core.tries[i].slot,
+                     core.tries[i].wrote, core.tries[i].read, core.tries[i].s2cr);
++            printf("SURYA CORE2: 5 ms after the CP start (no command yet): FSR=%#x FAR=%#llx RBBM_STATUS=%#x\n", core.fsr_start,
++                core.far_start, core.status_start);
++            printf("SURYA CORE2: fault syndrome FSYNR0=%#x FSYNR1=%#x GFSR=%#x; shadow rptr word %#x; catch page: %u dwords changed\n",
++                core.cb_fsynr0, core.cb_fsynr1, core.gfsr_end, core.scratch0, core.catch_hits);
++            for (unsigned i = 0; i < core.catch_hits && i < SURYA_CORE_CATCH; i++)
++                printf("SURYA CORE2: catch[%#x] = %#x\n", core.catch_off[i], core.catch_val[i]);
+             printf("SURYA CORE2: CP ring rptr=%u wptr=%u %s RBBM_STATUS=%#x INT0=%#x HW_FAULT=%#x CP_INT=%#x ucode %#x %#x\n",
+                 core.rptr, core.wptr, (core.wptr && core.rptr == core.wptr) ? "CAUGHT UP" : "NOT CAUGHT UP",
+                 core.status_cp, core.int0, core.hw_fault, core.cp_int, core.sqe_word0, core.sqe_word1);

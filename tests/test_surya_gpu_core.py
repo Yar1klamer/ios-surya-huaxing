@@ -193,5 +193,32 @@ class GpuCoreSmrExperimentsTests(unittest.TestCase):
         self.assertLess(full.index('if (r->attach_slot < 0) {'), full.index('smr_dive(smmu, r);'))
 
 
+class GpuCoreCatchPageTests(unittest.TestCase):
+    def setUp(self):
+        text = (ROOT / 'xnu/patches/0106-surya-gpu-core-catch-page.patch').read_text()
+        self.src = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+    def test_catch_page_at_iova_zero_sorted_before_the_buffer(self):
+        # 0105's run: translation fault at FAR=0; the library wants sorted ranges, so the catch at 0 comes first
+        self.assertIn('{0, buf_cpa, CATCH_BYTES, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},', self.src)
+        self.assertLess(self.src.index('{0, buf_cpa, CATCH_BYTES'), self.src.index('{G3_IOVA, buf_pa, G3_BYTES'))
+        self.assertIn('ArmSmmu4KBuild(&config, ranges, 2,', self.src)
+        # leaf budget covers both ranges (the 4th member is a leaf count, see 0102)
+        self.assertIn('(CATCH_BYTES + G3_BYTES) / 4096', self.src)
+
+    def test_catch_pattern_and_report(self):
+        self.assertIn('#define CATCH_PATTERN   0xdeadbeefu', self.src)
+        for name in ('catch_hits', 'fsr_start', 'cb_fsynr0', 'cb_fsynr1', 'gfsr_end', 'scratch0', 'CP_RB_RPTR_ADDR'):
+            self.assertIn(name, self.src)
+
+    def test_rptr_shadow_address_is_a_mapped_page_and_set_before_the_start(self):
+        self.assertIn('core_wr64(gpu, CP_RB_RPTR_ADDR, G3_IOVA + G3_SCRATCH_OFF);', self.src)
+        # the CP start line itself is unchanged diff context; the start-up probe right after it is added text
+        self.assertLess(self.src.index('core_wr64(gpu, CP_RB_RPTR_ADDR'), self.src.index('r->fsr_start ='))
+
+    def test_startup_state_is_read_before_any_command(self):
+        self.assertLess(self.src.index('r->fsr_start ='), self.src.index('r->cb_fsynr0 ='))
+
+
 if __name__ == '__main__':
     unittest.main()
