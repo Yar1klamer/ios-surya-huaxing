@@ -1,0 +1,179 @@
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -11,6 +11,7 @@
+ #include "surya_gpu_dt.h"
+ #include "surya_gmu_protocol.h"
+ #include "surya_unixnu_smmu.h"
++#include "surya_tz.h"
+ 
+ extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+@@ -410,6 +411,10 @@ surya_gpu_pt_diagnostic(void)
+     if (!pt_res && st.oob_ok && st.gx_powered)
+         surya_unixnu_smmu_capture(&unixnu);
+ 
++    /* G2 groundwork: only questions to TrustZone, nothing passed, nothing changed. */
++    struct surya_tz_report tz = {0};
++    surya_tz_probe(&tz);
++
+     for (;;) {
+         disableConsoleOutput = sweet_console_muted = 0;
+         printf("\nSURYA GPU PAGE TABLE DIAGNOSTIC: %s code=%d\n",
+@@ -449,6 +454,11 @@ surya_gpu_pt_diagnostic(void)
+             unixnu.context_enabled ? "ACTIVE" : "INACTIVE",
+             unixnu.active_sctlr, unixnu.active_fsr, unixnu.smr0, unixnu.s2cr0,
+             unixnu.streams_attached ? "ATTACHED" : "UNATTACHED");
++        printf("SURYA TZ: %s (smc %s, code %d); PAS init-image %u, auth-and-reset %u\n",
++            tz.answers ? "TrustZone ANSWERS" : "TrustZone DOES NOT ANSWER",
++            tz.smc64 ? "64-bit" : "32-bit", tz.code, tz.pas_init, tz.pas_auth);
++        printf("SURYA TZ: supported at-once/preemptible: audio %u/%u modem %u/%u video %u/%u GPU %u/%u\n",
++            tz.fast[0], tz.slow[0], tz.fast[1], tz.slow[1], tz.fast[2], tz.slow[2], tz.fast[3], tz.slow[3]);
+         printf("No GPU commands submitted; Metal acceleration not enabled\n");
+         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
+         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
+diff --git a/bsd/dev/surya_tz.c b/bsd/dev/surya_tz.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_tz.c
+@@ -0,0 +1,106 @@
++/*
++ * SURYA: the first look at TrustZone on the way to taking the Adreno 618 out of secure mode.
++ *
++ * The 3D core comes out of reset in "secure" mode; on a phone only TrustZone lets it out, when
++ * it is handed the vendor's signed zap shader to authenticate (Linux a6xx_gpu.c: a6xx_hw_init;
++ * qcom_scm.c: qcom_scm_pas_*; the GPU is image 13). Whether it will do that for this kernel
++ * decides whether the GPU can be used at all. These questions pass no memory and change
++ * nothing: Linux's first one ("is the call 'is this call available' available"), whether the
++ * two calls that authenticate an image exist, and which images it says it "supports", asked of
++ * the GPU's and of three the phone is known to start this way.
++ *
++ * The call convention and the shape of the probe follow HakiOS (bsd/dev/hakios.adreno.c, step
++ * 11; APSL 2.0), which follows Linux drivers/firmware/qcom/qcom_scm-smc.c.
++ * Every call is announced before it is made, so a hang or a silent reset shows where it was.
++ */
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include "surya_tz.h"
++
++#define TZ_FAST                 (1ull << 31)    /* answered at once; without it a call may be preempted */
++#define TZ_64                   (1ull << 30)
++#define TZ_SIP                  (2ull << 24)    /* a call of the SoC maker's, not an Arm standard one */
++#define TZ_CALL(service, command) ((uint64_t)(service) << 8 | (command))
++#define TZ_IS_CALL_AVAILABLE    TZ_CALL(6, 1)
++#define TZ_PAS_INIT_IMAGE       TZ_CALL(2, 1)
++#define TZ_PAS_AUTH_AND_RESET   TZ_CALL(2, 5)
++#define TZ_PAS_IS_SUPPORTED     TZ_CALL(2, 7)
++#define TZ_ONE_VALUE            1               /* the argument-description word: one plain number */
++#define TZ_INTERRUPTED          1               /* a preempted call says so, and is made again so */
++
++static const struct {
++	const char *name;
++	uint32_t id;
++} tz_images[SURYA_TZ_IMAGES] = { { "audio", 1 }, { "modem", 4 }, { "video", 9 }, { "GPU zap shader", 13 } };
++
++/* One call: TrustZone's return (0 or an error of its own), and the word of answer. */
++static int32_t
++tz_call(const char *what, uint64_t function, uint64_t first, uint64_t *answer)
++{
++	uint64_t session = 0;
++
++	printf("SURYA TZ: asking %s: smc %#llx, argument %#llx\n", what, function, first);
++	delay(20000);   /* let the line reach the screen before anything can go wrong */
++	for (int i = 0; i < 100; i++) {
++		register uint64_t x0 __asm__("x0") = i == 0 ? function : TZ_INTERRUPTED;
++		register uint64_t x1 __asm__("x1") = TZ_ONE_VALUE;
++		register uint64_t x2 __asm__("x2") = first;
++		register uint64_t x3 __asm__("x3") = 0;
++		register uint64_t x4 __asm__("x4") = 0;
++		register uint64_t x5 __asm__("x5") = 0;
++		register uint64_t x6 __asm__("x6") = session;
++		register uint64_t x7 __asm__("x7") = 0;
++
++		__asm__ volatile ("smc #0" : "+r" (x0), "+r" (x1), "+r" (x2), "+r" (x3), "+r" (x4), "+r" (x5), "+r" (x6),
++		    "+r" (x7) : : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
++		session = x6;
++		if (x0 != TZ_INTERRUPTED) {
++			*answer = x1;
++			printf("SURYA TZ: ... returns %d, answer %#llx\n", (int32_t)x0, x1);
++			return (int32_t)x0;
++		}
++	}
++	printf("SURYA TZ: ... keeps saying the call was interrupted\n");
++	return -1;
++}
++
++void
++surya_tz_probe(struct surya_tz_report *r)
++{
++	uint64_t answer = 0, how = TZ_FAST | TZ_64 | TZ_SIP;
++
++	r->asked = true;
++	r->smc64 = true;
++	r->code = tz_call("whether it can be asked", how | TZ_IS_CALL_AVAILABLE, TZ_SIP | TZ_IS_CALL_AVAILABLE, &answer);
++	r->answers = r->code == 0 && answer == 1;
++	if (!r->answers) {
++		how = TZ_FAST | TZ_SIP;         /* the same with 32-bit arguments: Linux's second try */
++		r->smc64 = false;
++		r->code = tz_call("the same, the 32-bit way", how | TZ_IS_CALL_AVAILABLE, TZ_SIP | TZ_IS_CALL_AVAILABLE,
++		    &answer);
++		r->answers = r->code == 0 && answer == 1;
++	}
++	if (!r->answers) {
++		return;
++	}
++	answer = 0;
++	if (tz_call("for the call that takes an image's signature", how | TZ_IS_CALL_AVAILABLE,
++	    TZ_SIP | TZ_PAS_INIT_IMAGE, &answer) == 0) {
++		r->pas_init = (uint32_t)(answer & 1u);
++	}
++	answer = 0;
++	if (tz_call("for the call that authenticates and starts an image", how | TZ_IS_CALL_AVAILABLE,
++	    TZ_SIP | TZ_PAS_AUTH_AND_RESET, &answer) == 0) {
++		r->pas_auth = (uint32_t)(answer & 1u);
++	}
++	for (unsigned i = 0; i < SURYA_TZ_IMAGES; i++) {
++		answer = 0;
++		r->fast[i] = tz_call(tz_images[i].name, how | TZ_PAS_IS_SUPPORTED, tz_images[i].id, &answer) == 0 && answer;
++		answer = 0;
++		r->slow[i] = tz_call(tz_images[i].name, (how & ~TZ_FAST) | TZ_PAS_IS_SUPPORTED, tz_images[i].id,
++		    &answer) == 0 && answer;
++	}
++}
++#endif
+diff --git a/bsd/dev/surya_tz.h b/bsd/dev/surya_tz.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/surya_tz.h
+@@ -0,0 +1,21 @@
++/* SURYA: questions to TrustZone, asked before the GPU's zap shader is ever handed to it. */
++#ifndef SURYA_TZ_H
++#define SURYA_TZ_H
++#include <stdbool.h>
++#include <stdint.h>
++
++#define SURYA_TZ_IMAGES 4       /* audio (1), modem (4), video (9), GPU zap shader (13) */
++
++struct surya_tz_report {
++	bool    asked;                  /* the probe ran */
++	bool    answers;                /* "is the call 'is this call available' available" said yes */
++	bool    smc64;                  /* it answered the 64-bit way (else the 32-bit way) */
++	int32_t code;                   /* TrustZone's return for the first question */
++	uint32_t pas_init;              /* 1: it has the call that takes an image's signature */
++	uint32_t pas_auth;              /* 1: it has the call that authenticates and starts an image */
++	uint32_t fast[SURYA_TZ_IMAGES]; /* "supported" for audio, modem, video, GPU: asked at once */
++	uint32_t slow[SURYA_TZ_IMAGES]; /* ... and as a call that may be preempted, as Linux asks */
++};
++
++void surya_tz_probe(struct surya_tz_report *r);
++#endif
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -115,3 +115,4 @@
+ bsd/dev/ArmSmmu4KStreams.c			standard
+ bsd/dev/surya_unixnu_smmu.c		standard
++bsd/dev/surya_tz.c			standard
+ bsd/dev/sweet_rpmh.c			standard

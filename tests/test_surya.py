@@ -160,6 +160,20 @@ class SuryaTests(unittest.TestCase):
         self.assertEqual(added.count('keys_wled.ready = true'), 1)
         self.assertIn('sweet_surya_backlight(off ? 0 : 1)', text)
 
+    def test_tz_probe_only_asks_questions(self):
+        # patch 0098: TrustZone is only asked "is this call available" and "is this image supported";
+        # nothing that takes memory or changes state (init-image, auth-and-reset, mem-setup, shutdown) is ever the call itself
+        text = (ROOT / 'xnu/patches/0098-surya-tz-probe.patch').read_text()
+        added = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+        import re
+        calls = re.findall(r'tz_call\(([^;]*?&answer)', added, re.S)
+        self.assertGreaterEqual(len(calls), 5)
+        for call in calls:
+            self.assertTrue('TZ_IS_CALL_AVAILABLE' in call or 'TZ_PAS_IS_SUPPORTED' in call, call)
+        for forbidden in ('TZ_PAS_MEM_SETUP', 'TZ_PAS_SHUTDOWN', 'how | TZ_PAS_INIT_IMAGE', 'how | TZ_PAS_AUTH_AND_RESET'):
+            self.assertNotIn(forbidden, added)
+        self.assertIn('x3 __asm__("x3") = 0', added)   # no memory address ever passed
+
     def test_gpu_table_profile_preserves_root_and_other_gates(self):
         b = payload(apple=True)
         cmd = surya.APPLE_GPU_PT_CMDLINE.encode()
