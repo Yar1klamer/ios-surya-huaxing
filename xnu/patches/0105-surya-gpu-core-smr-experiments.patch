@@ -1,0 +1,114 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -196,6 +196,69 @@ core_wr64(vm_offset_t gpu, uint32_t off, uint64_t value)
+ 	core_wr(gpu, off + 4, (uint32_t)(value >> 32));
+ }
+ 
++static void
++smmu_w(vm_offset_t base, uint32_t off, uint32_t value)
++{
++	*(volatile uint32_t *)(base + off) = value;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static uint32_t
++smmu_r(vm_offset_t base, uint32_t off)
++{
++	return *(volatile uint32_t *)(base + off);
++}
++
++/*
++ * Run only when no SMR shape was taken: the experiments that tell the possible reasons apart, on group 0 and with the group put
++ * back as found (S2CR fault, SMR invalid). The hypotheses, each with the experiment that decides it:
++ *   - a valid entry needs its S2CR in some state         -> A (S2CR left at FAULT) and B (SMR first, then S2CR)
++ *   - the write lands late                               -> C (read again after 100 us and 5 ms)
++ *   - the width of the id is what is refused             -> D (valid with all 15 id bits) against the exact-id shapes already tried
++ *   - the secure world owns the group                    -> none of A..D sticks, and the global registers below say who is configured
++ * Nothing here reaches the GPU: no stream is attached by these writes.
++ */
++static void
++smr_dive(vm_offset_t smmu, struct surya_gpu_core_report *r)
++{
++	const uint32_t valid = 1u << 31;
++	const uint32_t smr = 0x800, s2cr = 0xc00;
++
++	printf("SURYA CORE: SMMU experiments on group 0: valid bit against S2CR state, order, delay and id width\n");
++	delay(20000);
++	smmu_w(smmu, s2cr, 0x20000);                    /* A: S2CR at FAULT, the state it was found in */
++	smmu_w(smmu, smr, valid);
++	r->dive_fault_valid = smmu_r(smmu, smr);
++	smmu_w(smmu, smr, 0);
++	smmu_w(smmu, smr, valid);                       /* B: SMR first, then S2CR translate */
++	smmu_w(smmu, s2cr, 0);
++	r->dive_smr_first = smmu_r(smmu, smr);
++	smmu_w(smmu, smr, 0);
++	smmu_w(smmu, s2cr, 0);                          /* C: S2CR translate, valid-only, read late */
++	smmu_w(smmu, smr, valid);
++	r->dive_late[0] = smmu_r(smmu, smr);
++	delay(100);
++	r->dive_late[1] = smmu_r(smmu, smr);
++	delay(5000);
++	r->dive_late[2] = smmu_r(smmu, smr);
++	smmu_w(smmu, smr, 0);
++	smmu_w(smmu, smr, valid | 0x7fffu);             /* D: valid with every id bit the field holds */
++	r->dive_wide = smmu_r(smmu, smr);
++	smmu_w(smmu, smr, 0);
++	smmu_w(smmu, s2cr, 0x10000);                    /* E: does S2CR take another type (bypass)? */
++	r->dive_bypass = smmu_r(smmu, s2cr);
++	smmu_w(smmu, s2cr, 0x20000);                    /* group 0 as found */
++	smmu_w(smmu, smr, 0);
++	r->glob_scr0 = smmu_r(smmu, 0x0);
++	r->glob_scr1 = smmu_r(smmu, 0x4);
++	r->glob_scr2 = smmu_r(smmu, 0x8);
++	r->glob_sacr = smmu_r(smmu, 0x10);
++	r->glob_id7 = smmu_r(smmu, 0x3c);
++	r->glob_gfar = smmu_r(smmu, 0x40) | ((uint64_t)smmu_r(smmu, 0x44) << 32);
++	r->gfsynr0 = smmu_r(smmu, 0x50);
++	r->gfsr_after = smmu_r(smmu, 0x48);
++}
++
+ static void
+ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_gpu_core_report *r)
+ {
+@@ -361,6 +424,8 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	r->gfsr_after = *(volatile uint32_t *)(smmu + 0x48);
+ 	r->gfsynr0 = *(volatile uint32_t *)(smmu + 0x50);
+ 	if (r->attach_slot < 0) {
++		smr_dive(smmu, r);
++		r->dived = true;
+ 		r->smr0 = *(volatile uint32_t *)(smmu + 0x800);
+ 		r->s2cr0 = *(volatile uint32_t *)(smmu + 0xc00);
+ 		r->s2_stop = 7;
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -39,6 +39,11 @@ struct surya_gpu_core_report {
+ 	int      attach_slot;           /* the match group that took stream 0, or -1 */
+ 	unsigned ntries;                /* the SMR shapes tried, in order, and what each read back */
+ 	struct { uint32_t slot, wrote, read, s2cr; } tries[SURYA_CORE_TRIES];
++	/* the experiments run when no shape was taken (smr_dive in surya_gpu_core.c) */
++	bool     dived;
++	uint32_t dive_fault_valid, dive_smr_first, dive_late[3], dive_wide, dive_bypass;
++	uint32_t glob_scr0, glob_scr1, glob_scr2, glob_sacr, glob_id7;
++	uint64_t glob_gfar;
+ 	uint32_t smr_init[SURYA_CORE_SLOTS], s2cr_init[SURYA_CORE_SLOTS];       /* the groups before anything was written */
+ 	uint32_t rptr, wptr;            /* the ring after CP_ME_INIT */
+ 	uint32_t status_cp, int0, hw_fault, cp_int;
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -505,6 +505,13 @@ surya_gpu_pt_diagnostic(void)
+             printf("SURYA CORE2: probe id bits %#x mask bits %#x; NUMSIDB %u; stream 0 on group %d, SMR %#x\n", core.smr_idmask,
+                 core.smr_maskmask, core.numsidb, core.attach_slot, core.smr_want);
+             printf("SURYA CORE2: after the tries GFSR=%#x GFSYNR0=%#x\n", core.gfsr_after, core.gfsynr0);
++            if (core.dived) {
++                printf("SURYA CORE2: dive: valid with S2CR fault -> %#x; SMR first -> %#x; late reads %#x %#x %#x; valid+wide id -> %#x; S2CR bypass -> %#x\n",
++                    core.dive_fault_valid, core.dive_smr_first, core.dive_late[0], core.dive_late[1], core.dive_late[2],
++                    core.dive_wide, core.dive_bypass);
++                printf("SURYA CORE2: SMMU sCR0=%#x sCR1=%#x sCR2=%#x sACR=%#x ID7=%#x GFAR=%#llx\n", core.glob_scr0, core.glob_scr1,
++                    core.glob_scr2, core.glob_sacr, core.glob_id7, core.glob_gfar);
++            }
+             for (unsigned i = 0; i < core.ntries; i++)
+                 printf("SURYA CORE2: try %u: group %u wrote SMR %#x read %#x (S2CR %#x)\n", i, core.tries[i].slot,
+                     core.tries[i].wrote, core.tries[i].read, core.tries[i].s2cr);
