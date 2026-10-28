@@ -8,6 +8,17 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — SMP-образы собраны (на хосте project-make, не загружены)
+- Linux-хост `burmalda@192.168.1.112` (4 ядра, 7 ГБ): вход по отдельному ключу `~/.ssh/id_claude_surya` (без фразы;
+  добавлен владельцем). Есть clang, aarch64-linux-gnu-gcc, dtc, mkbootimg (~/mkbootimg), старая сборка в ~/surya-build.
+- Ядро = артефакт CI-рана 39571436818 (d8281fa), sha256 22de5055...a37c; совпадает с ~/surya-build/kernel.development.surya.
+  Новая сборка ядра не нужна: SMP-патчи 0065/0078 уже внутри, менялись только ADT и cmdline.
+- Рабочая копия `~/surya-smp` (клон форка f1ebefc; локально убран флаг `--no-warn-rwx-segments` в shim/build.sh — старый ld).
+  61 тест OK. ADT: `surya.py --apple-root --cpus 6` (RAM 0x100000000+0xfc000000, evidence из ~/surya-build/live).
+- Образы (на ПК `research/images/`): `boot-smp6-diag.img` (touch-diagnostic: консоль видна, `cpus=6`, тач-прошивка Tianma)
+  sha256 afefb95a...; `boot-smp6.img` (чистый GUI, консоль выключена) sha256 983312d5....
+- Ожидаем в логе: `SWEET CPU: cpu=N mpidr=0x.. came alive; SGI1 OK` для cpu 0..5. НЕ загружено на телефон, результат неизвестен.
+
 ## 2026-10-28 — фаза 0 выполнена (Poco в recovery, adb 5d1eea87)
 **Наблюдения** (данные в `research/live-surya-android/`, в git не идут)
 - Телефон: POCO X3 NFC, vendor Android 12 MIUI 14 (surya_eea), recovery fox_surya. Динамические разделы целы (`super`=sda15).
