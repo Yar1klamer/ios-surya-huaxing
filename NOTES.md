@@ -7,6 +7,15 @@ steering: "remember just do that it works with poco x3 nfc". Work here, in
 `C:/Users/Arbuxik/Documents/ChatGPT/ios-surya-from-sweet`, branch `codex/surya-port`.
 Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
+## 2026-10-28 handoff addendum (Claude Sonnet 5.5; details in WORKLOG.md)
+- THIS owner's phone is the **Huaxing** NT36672C variant (live bootargs `androidboot.lcmtype=dsi_nt36672c_huaxing_fhd_video_display`). Earlier
+  notes below that say the captured bootargs identify a Tianma panel describe the upstream/other variant: the Tianma firmware was used because the fork
+  inherited a Tianma driver. Patch 0096 loads the Huaxing image (`novatek_ts_huaxing_fw.bin`, sha256 4e519856...) selected by chosen/surya-touch-panel.
+- Verified on hardware: SMP 6/6 and 8/8 CPUs (0065/0078 + `cpus=N`), PMIC keys power/vol+/vol- (0094, read-only poller, HID 0x30/0xe9/0xea),
+  Huaxing touch firmware (0096), display off/on with backlight (0097: WLED MOD_EN bit 7 of the PM6150L control module, one read-back write).
+- The panel is an IPS LCD: AMOLED assumptions from sweet (0079 fades to black) need the backlight switch.
+- Kernel builds only on GitHub Actions (macos-14); a CI artifact can be fetched with a read-only token (never stored in the repo).
+
 ## Current SURYA state
 
 ## SMMUv2 Live Context Bank 0 Activation & Stream Attachment (2026-10-20)
