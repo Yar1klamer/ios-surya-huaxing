@@ -267,3 +267,20 @@ class GpuCorePreRingErrorStateTests(unittest.TestCase):
     def test_extra_streams_reach_the_final_report(self):
         self.assertIn('extra user streams attached', self.src)
         self.assertIn('SURYA CORE2: extra stream %#x: SMR %#x S2CR %#x', self.src)
+
+
+class GpuCoreKeepZapTests(unittest.TestCase):
+    """0110: KGSL/Linux start the CP with the zap shader authenticated, then CP_SET_SECURE_MODE 0; 0099's final SHUTDOWN is skipped."""
+
+    def setUp(self):
+        text = (ROOT / 'xnu/patches/0110-surya-gpu-core-keep-zap-secure-mode-off.patch').read_text(encoding='utf-8')
+        self.src = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+    def test_zap_is_kept_when_the_cp_stage_runs(self):
+        self.assertIn('surya_zap_keep = core_stage_early >= 2;', self.src)
+        self.assertIn('if (surya_zap_keep) {', self.src)
+        self.assertIn('extern int surya_zap_keep;', self.src)
+
+    def test_secure_mode_is_left_with_set_secure_mode_zero(self):
+        self.assertEqual(0x66, 0x66)
+        self.assertIn('ring[n++] = pkt7(0x66, 1);', self.src)

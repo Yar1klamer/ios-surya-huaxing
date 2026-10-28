@@ -1,0 +1,59 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -313,6 +313,8 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 	ring[n++] = 0;                  /* no workarounds */
+ 	ring[n++] = 0;
+ 	ring[n++] = 0;
++	ring[n++] = pkt7(0x66, 1);      /* CP_SET_SECURE_MODE: leave secure mode, the zap shader being authenticated (Linux, KGSL) */
++	ring[n++] = 0;
+ 	/* the fourth member is the explicit budget of 4 KiB leaf pages to map (not table pages): the whole buffer */
+ 	/*
+ 	 * The 0105 run: the CP started and the SMMU context took a translation fault at address 0 (FSR 0x40000402, FAR 0), which
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -424,6 +424,7 @@ surya_gpu_pt_diagnostic(void)
+     struct surya_zap_report zap = {0};
+     int zap_enabled = 0;
+     (void)PE_parse_boot_argn("suryazap", &zap_enabled, sizeof(zap_enabled));
++    surya_zap_keep = core_stage_early >= 2;         /* the CP runs with the zap shader authenticated, as under KGSL */
+     if (zap_enabled == 1 && tz.answers) surya_zap_load(&zap);
+ 
+     /* G3: the 3D core, one stage at a time: only with the explicit suryacore=N, and only with the GX domain powered. */
+diff --git a/bsd/dev/surya_zap.c b/bsd/dev/surya_zap.c
+--- a/bsd/dev/surya_zap.c
++++ b/bsd/dev/surya_zap.c
+@@ -97,6 +97,8 @@ zap_ok(int32_t result, uint64_t answer, struct surya_zap_report *r)
+ 	return result == 0 && answer == 0;
+ }
+ 
++int surya_zap_keep;
++
+ void
+ surya_zap_load(struct surya_zap_report *r)
+ {
+@@ -211,6 +213,12 @@ surya_zap_load(struct surya_zap_report *r)
+ 
+ 	/* 8: given back */
+ 	answer = ~0ull;
++	if (surya_zap_keep) {
++		printf("SURYA ZAP: keeping the zap shader authenticated for the CP\n");
++		r->released = false;
++		r->stage = 8;
++		return;
++	}
+ 	r->released = zap_ok(zap_scm("to give the zap shader up again", ZAP_64 | ZAP_SIP | ZAP_PAS_SHUTDOWN,
+ 	    ZAP_ONE_VALUE, ZAP_PAS_GPU, 0, 0, &answer), answer, r);
+ 	r->stage = 8;
+diff --git a/bsd/dev/surya_zap.h b/bsd/dev/surya_zap.h
+--- a/bsd/dev/surya_zap.h
++++ b/bsd/dev/surya_zap.h
+@@ -17,5 +17,7 @@ struct surya_zap_report {
+ 	bool     released;              /* ... and took it away again at the end */
+ };
+ 
++/* G3b: when set, surya_zap_load() leaves the zap shader authenticated at the end (as KGSL and Linux do while the CP runs) */
++extern int surya_zap_keep;
+ void surya_zap_load(struct surya_zap_report *r);
+ #endif
