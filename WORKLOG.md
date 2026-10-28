@@ -8,6 +8,9 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — образ `boot-mac-gpu-core2h.img` собран (патч 0109); ждёт «грузи»
+- Смотреть: `SURYA CORE2: before any command CP_INT=… HW_FAULT=… INT0=…` (0x80 уже до кольца → дефект микрокода/его доставки; 0 → виноват пакет ME_INIT), `extra stream … SMR … S2CR …`, и когда (через сколько) произойдёт самопроизвольная перезагрузка.
+
 ## 2026-10-28 — патч 0109 написан (состояние ошибок CP до записи в кольцо; итоги привязки доп. потоков в итоговый отчёт); 102 теста OK
 - Через 5 мс после `CP_SQE_CNTL=1`, ДО записи `WPTR`, читаются `CP_INTERRUPT_STATUS`, `CP_HW_FAULT`, `RBBM_INT_0_STATUS` (`SURYA CORE2: before any command CP_INT=… HW_FAULT=… INT0=…`). Если `CP_INT=0x80` уже там — микрокод в SQE некорректен (не пакет); если 0 — виноват пакет в кольце.
 - Итоги привязки ids 1/0x400/0x401 теперь в конце консоли (`extra stream … SMR … S2CR …`). Сборка ядра и образ `core2h` следом.
