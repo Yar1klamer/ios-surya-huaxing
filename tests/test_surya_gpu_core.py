@@ -182,14 +182,15 @@ class GpuCoreSmrExperimentsTests(unittest.TestCase):
             self.assertIn(tag, self.src)
 
     def test_experiments_touch_group_zero_only_and_leave_it_as_found(self):
-        body = self.src[self.src.index('smr_dive(vm_offset_t smmu'):self.src.index('stage2(vm_offset_t gpu')]
+        body = self.src[self.src.index('smr_dive(vm_offset_t smmu'):self.src.index('r->gfsr_after = smmu_r(smmu, 0x48);')]
         self.assertIn('const uint32_t smr = 0x800, s2cr = 0xc00;', body)        # group 0's registers, no slot arithmetic
         self.assertNotIn('4 * ', body)
         tail = body[body.rindex('smmu_w(smmu, s2cr, 0x20000);'):]
         self.assertIn('smmu_w(smmu, smr, 0);', tail)                                # S2CR fault, SMR invalid: as found
 
     def test_run_only_when_no_shape_was_taken(self):
-        self.assertLess(self.src.index('if (r->attach_slot < 0) {'), self.src.index('smr_dive(smmu, r);'))
+        full = (ROOT / 'xnu/patches/0105-surya-gpu-core-smr-experiments.patch').read_text()   # the guard line is diff context
+        self.assertLess(full.index('if (r->attach_slot < 0) {'), full.index('smr_dive(smmu, r);'))
 
 
 if __name__ == '__main__':
