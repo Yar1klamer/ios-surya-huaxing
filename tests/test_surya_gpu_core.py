@@ -129,5 +129,25 @@ class GpuCoreLeafBudgetTests(unittest.TestCase):
         self.assertIn('s2_code', added)
 
 
+class GpuCoreSmrProbeTests(unittest.TestCase):
+    def setUp(self):
+        text = (ROOT / 'xnu/patches/0103-surya-gpu-core-smr-probe.patch').read_text()
+        self.src = chr(10).join(l[1:] for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
+
+    def test_widths_are_probed_with_the_valid_bit_clear_before_the_real_write(self):
+        # 0102's run: SMR0 written 0x84010000 read back 0 (this SMMU has 3 stream-id bits, 5 groups); Linux probes the widths first
+        probe_id = self.src.index('= 0x7fffu;')
+        probe_mask = self.src.index('= 0x7fffu << 16;')
+        real = self.src.index('= want_smr;')
+        self.assertLess(probe_id, probe_mask)
+        self.assertLess(probe_mask, real)
+        self.assertNotIn('(1u << 31) | 0x7fff', self.src)       # the probes never set the valid bit
+        self.assertIn('0x401u & r->smr_maskmask', self.src)     # the DT mask, cut to the implemented bits
+
+    def test_report_carries_the_groups_and_widths(self):
+        for name in ('smr_idmask', 'smr_maskmask', 'smr_want', 'smr_init', 's2cr_init', 'gfsr', 'scr1'):
+            self.assertIn(name, self.src)
+
+
 if __name__ == '__main__':
     unittest.main()

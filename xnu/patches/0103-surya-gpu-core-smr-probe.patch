@@ -1,0 +1,90 @@
+diff --git a/bsd/dev/surya_gpu_core.c b/bsd/dev/surya_gpu_core.c
+--- a/bsd/dev/surya_gpu_core.c
++++ b/bsd/dev/surya_gpu_core.c
+@@ -282,16 +282,45 @@ stage2(vm_offset_t gpu, const struct surya_unixnu_smmu_report *u, struct surya_g
+ 		return;
+ 	}
+ 
+-	/* stream 0 (match 0x0 with mask 0x401) to that context: S2CR as translate-to-bank-0, then the match register */
+-	printf("SURYA CORE: attaching stream 0 (mask 0x401) to context bank 0\n");
++	r->cb_sctlr = *(volatile uint32_t *)(smmu + u->cb_offset);      /* the bank as the library left it */
++
++	/*
++	 * Stream 0 to that context. The match registers have only as many id and mask bits as the hardware implements (this
++	 * SMMU's ID0 says 3 stream-id bits and 5 groups), so, as arm_smmu_device_cfg_probe does, first learn the widths with the
++	 * valid bit clear (no effect on matching), then write the DT's "0x0 0x401" cut to them: S2CR as translate-to-bank-0
++	 * first, then the match register, and read both back.
++	 */
++	unsigned slots = u->id0 & 0xffu;
++	if (slots > SURYA_CORE_SLOTS) {
++		slots = SURYA_CORE_SLOTS;
++	}
++	for (unsigned i = 0; i < slots; i++) {
++		r->smr_init[i] = *(volatile uint32_t *)(smmu + 0x800 + 4 * i);
++		r->s2cr_init[i] = *(volatile uint32_t *)(smmu + 0xc00 + 4 * i);
++	}
++	r->scr1 = *(volatile uint32_t *)(smmu + 0x4);
++	r->gfsr = *(volatile uint32_t *)(smmu + 0x48);
++	*(volatile uint32_t *)(smmu + 0x800) = 0x7fffu;                                 /* all id bits, valid clear */
++	__asm__ volatile("dsb osh" ::: "memory");
++	r->smr_idmask = *(volatile uint32_t *)(smmu + 0x800) & 0x7fffu;
++	*(volatile uint32_t *)(smmu + 0x800) = 0x7fffu << 16;                           /* all mask bits, valid clear */
++	__asm__ volatile("dsb osh" ::: "memory");
++	r->smr_maskmask = (*(volatile uint32_t *)(smmu + 0x800) >> 16) & 0x7fffu;
++	*(volatile uint32_t *)(smmu + 0x800) = 0;
++	__asm__ volatile("dsb osh" ::: "memory");
++	const uint32_t want_mask = 0x401u & r->smr_maskmask;
++	const uint32_t want_smr = (1u << 31) | (want_mask << 16) | ((uint32_t)SURYA_DT_USER_SID & r->smr_idmask);
++	r->smr_want = want_smr;
++	printf("SURYA CORE: attaching stream 0 to context bank 0: id bits %#x, mask bits %#x, writing SMR0 %#x\n", r->smr_idmask,
++	    r->smr_maskmask, want_smr);
+ 	delay(20000);
+ 	*(volatile uint32_t *)(smmu + 0xc00) = 0;                                       /* TYPE translate, CBNDX 0 */
+ 	__asm__ volatile("dsb osh" ::: "memory");
+-	*(volatile uint32_t *)(smmu + 0x800) = (1u << 31) | (0x401u << 16) | (uint32_t)SURYA_DT_USER_SID;
++	*(volatile uint32_t *)(smmu + 0x800) = want_smr;
+ 	__asm__ volatile("dsb osh" ::: "memory");
+ 	r->s2cr0 = *(volatile uint32_t *)(smmu + 0xc00);
+ 	r->smr0 = *(volatile uint32_t *)(smmu + 0x800);
+-	if (r->s2cr0 != 0 || r->smr0 != ((1u << 31) | (0x401u << 16) | (uint32_t)SURYA_DT_USER_SID)) {
++	if (r->s2cr0 != 0 || r->smr0 != want_smr) {
+ 		r->s2_stop = 7;
+ 		return;
+ 	}
+diff --git a/bsd/dev/surya_gpu_core.h b/bsd/dev/surya_gpu_core.h
+--- a/bsd/dev/surya_gpu_core.h
++++ b/bsd/dev/surya_gpu_core.h
+@@ -5,6 +5,7 @@
+ #include <stdint.h>
+ 
+ #define SURYA_CORE_DIFFS 6
++#define SURYA_CORE_SLOTS 5      /* this SMMU's stream mapping groups (ID0 bits 7:0) */
+ 
+ struct surya_core_diff {
+ 	const char *name;
+@@ -30,6 +31,9 @@ struct surya_gpu_core_report {
+ 	uint32_t cb_sctlr, cb_fsr;      /* SMMU context bank 0 afterwards */
+ 	uint64_t cb_far;
+ 	uint32_t smr0, s2cr0;           /* stream 0 as attached */
++	uint32_t smr_idmask, smr_maskmask, smr_want;    /* the match register's implemented id and mask bits; what was written */
++	uint32_t scr1, gfsr;            /* SMMU global state when stage 2 looked */
++	uint32_t smr_init[SURYA_CORE_SLOTS], s2cr_init[SURYA_CORE_SLOTS];       /* the groups before anything was written */
+ 	uint32_t rptr, wptr;            /* the ring after CP_ME_INIT */
+ 	uint32_t status_cp, int0, hw_fault, cp_int;
+ 	uint32_t sqe_word0, sqe_word1;  /* first words of the microcode as the GPU-visible buffer holds them */
+diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
+--- a/bsd/dev/surya_gpu_pt.c
++++ b/bsd/dev/surya_gpu_pt.c
+@@ -498,6 +498,12 @@ surya_gpu_pt_diagnostic(void)
+         if (core_stage >= 2) {
+             printf("SURYA CORE2: %s stop=%d/%d SMMU SCTLR=%#x FSR=%#x FAR=%#llx SMR0=%#x S2CR0=%#x\n",
+                 core.done >= 2 ? "RAN" : "STOPPED", core.s2_stop, core.s2_code, core.cb_sctlr, core.cb_fsr, core.cb_far, core.smr0, core.s2cr0);
++            printf("SURYA CORE2: SMMU groups SMR %#x %#x %#x %#x %#x S2CR %#x %#x %#x %#x %#x; SCR1=%#x GFSR=%#x\n",
++                core.smr_init[0], core.smr_init[1], core.smr_init[2], core.smr_init[3], core.smr_init[4],
++                core.s2cr_init[0], core.s2cr_init[1], core.s2cr_init[2], core.s2cr_init[3], core.s2cr_init[4],
++                core.scr1, core.gfsr);
++            printf("SURYA CORE2: match id bits %#x mask bits %#x, SMR0 wanted %#x read %#x\n", core.smr_idmask,
++                core.smr_maskmask, core.smr_want, core.smr0);
+             printf("SURYA CORE2: CP ring rptr=%u wptr=%u %s RBBM_STATUS=%#x INT0=%#x HW_FAULT=%#x CP_INT=%#x ucode %#x %#x\n",
+                 core.rptr, core.wptr, (core.wptr && core.rptr == core.wptr) ? "CAUGHT UP" : "NOT CAUGHT UP",
+                 core.status_cp, core.int0, core.hw_fault, core.cp_int, core.sqe_word0, core.sqe_word1);
