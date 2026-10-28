@@ -8,6 +8,17 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — G2-подготовка: TrustZone отвечает (наблюдение, фото владельца; `boot-gpu-tz.img`, ядро CI 40655366573, 5f29310)
+- `SURYA TZ: TrustZone ANSWERS (smc 64-bit, code 0); PAS init-image 1, auth-and-reset 1`: TZ слушает вызовы нашего ядра и имеет оба вызова для проверки/запуска образа.
+- `supported` = 0/0 для audio, modem, video **и** GPU: вопрос ничего не говорит (телефон модем/аудио точно стартует через PAS), как и предупреждал HakiOS. Не признак отказа для GPU.
+- Питание GPU как раньше: CX PASS, GMU BABEFACE, OOB6 ACK, GX ON; ядро: `RBBM_STATUS=0x1 STATUS3=0 GBIF_QOS=0xdeafbead` (без изменений).
+- SMMU на ЭТОМ телефоне (первый запуск шага привязки потока на этом экземпляре): `ID0=0x48016605 ID1=0x20008005 ID2=0x7511 SCR0=0x200626`, CB0 запрограммирован и активен (`SCTLR=0x10e7`, `FSR=0x400`),
+  но `stage=4 code=50` = 40 + `ArmSmmu4KBusy`: привязка потока 0 отклонена. Причина по коду `ArmSmmu4KStreams.c: scan()`: ожидает `S2CR0 & ~valid == FAULT (0x20000)`, а прочитано `0x200ff` (TYPE=FAULT, CBNDX=0xff:
+  значение по умолчанию как в Linux; наша предварительная запись 0x20000 в младший байт не повлияла). Гипотеза, не проверено: старые ID0/ID1 из NOTES сняты на другом экземпляре. Решение: привязка в обход строгой проверки (запись S2CR/SMR с read-back), нужна к G3.
+- zap-образ (`a615_zap.mdt`, ELF): метаданные для TZ = весь .mdt (6860 = 148 + хэш-сегмент 0x1a38); код = единственный PT_LOAD (p_paddr 0x5000, 0x7c0 байт, relocatable) = `a615_zap.b02` (1984 байта); память под него в DT: `gpu_region@97715000`, 0x2000, no-map.
+- Следующее (G2): ADT-свойства с zap-файлами, шаги PAS INIT_IMAGE (метаданные в физически непрерывной памяти ядра), MEM_SETUP, копия b02 в gpu_region, AUTH_AND_RESET. Это первый шаг с побочным эффектом в TZ: отдельный boot-arg.
+
+
 ## 2026-10-28 — план GPU (docs/gpu-plan.md)
 - Этапы G1–G7 с критериями и рисками: G1 чтение 3D-ядра, G2 secure mode (zap через SCM/PAS), G3 SQE+кольцо+первая команда, G4 IRQ/fence,
   G5 сервис+userclient, G6 Mesa/GLES-композитинг (даёт видимое ускорение), G7 DVFS. Основа — подтверждённое G0 (GMU/OOB6/GX/SMMU CB0) и HakiOS adreno.c.
