@@ -8,6 +8,11 @@
 Источники: `dipa-studio/ios-sweet` (база), `oosexgang/hackios-xnu-kernel` (HakiOS, POCO X5 Pro: GPU через Mesa,
 звук, Wi-Fi, камеры, 8 ядер). Клоны лежат в `research/` (в git не попадают).
 
+## 2026-10-28 — G3: разбор последовательности (docs/gpu-plan.md, раздел «G3 — конкретика»)
+- Из Linux `a6xx_hw_init` выделен минимум для первой команды GPU и все смещения регистров A6xx (байтовые, из `a6xx.xml`); коды CP: ME_INIT 0x48, MEM_WRITE 0x3d, SET_SECURE_MODE 0x66.
+- План проверок: G3a (регистры), G3b (SMMU+SQE+кольцо+CP_ME_INIT), G3c (zap остаётся, SET_SECURE_MODE, MEM_WRITE). Сборка ядра теперь локальная (хакинтош).
+
+
 ## 2026-10-28 — переезд на хакинтош (macOS 15, Intel i5-13400F): локальная сборка ядра работает
 - Xcode 15.4 (15F31d), SDK 14.5; Homebrew недоступен на Intel — `tools/build-kernel-macos.sh` переделан: `cmake`/`ninja` из pip в venv, заглушки `xcodes`/`gum`, локальный sed в `build.sh`
   (он пересобирает PATH из Xcode+system+/usr/local, наши каталоги иначе теряются). KDK 13.5 (22G74) ставится скриптом (`sudo installer`, пароль вводит владелец).

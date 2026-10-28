@@ -42,3 +42,25 @@ HakiOS (`bsd/dev/hakios.adreno.c`, Adreno 642L: тот же подход «ша�
 ## Источники
 HakiOS `oosexgang/hackios-xnu-kernel` (лицензия: ядро APSL 2.0, остальное MIT), Linux `msm/adreno`, MiCode Xiaomi_Kernel_OpenSource (`surya-q-oss`),
 UniXNU (ArmSmmu4K, NativeAdrenoABI — A740-специфичный, A6xx не переносится), Mesa `docs.mesa3d.org/drivers/freedreno.html`.
+
+## G3 — конкретика (разобрано 2026-10-28 по Linux `a6xx_gpu.c` и `registers/adreno/a6xx.xml`, `adreno_pm4.xml`)
+
+Подтверждено на железе до G3: GX включён, RBBM читается, TrustZone авторизует zap (G2). Порядок Linux `a6xx_hw_init`, урезанный до необходимого:
+
+1. Снять GBIF-halt: `GBIF_HALT`(0xf114)=0, `RBBM_GBIF_HALT`(0x58)=0 (A618 — не A630, у неё есть GBIF). `RBBM_SECVID_TSB_CNTL`(0x3e00c)=0,
+   `RBBM_SECVID_TSB_TRUSTED_BASE`(0x3e000, 64 бита)=0, `..._SIZE`(0x3e008)=0.
+2. 64-битная адресация блоков (=1): `CP`(0x2108) `VSC`(0x3004) `GRAS`(0x21804) `RB`(0x23814) `PC`(0x27804) `HLSQ`(0x2f814) `VFD`(0x29804)
+   `VPC`(0x25804) `UCHE`(0x3800) `SP`(0x2b804) `TPL1`(0x2d804) `RBBM_SECVID_TSB`(0x3e040) `_ADDR_MODE_CNTL`.
+3. Прочее: `RBBM_VBIF_CLIENT_QOS_CNTL`(0x40)=3, `RBBM_PERFCTR_GPU_BUSY_MASKED`(0x142c)=0xffffffff, `UCHE_WRITE_RANGE_MAX`(0x3814)/`TRAP_BASE`(0x3824)/`WRITE_THRU_BASE`(0x381c)
+   (64 бита; база = uche_trap_base), `UCHE_GMEM_RANGE_MIN/MAX`(0x382c/0x3834)=0x100000/…, `UCHE_FILTER_CNTL`(0x3860)=0x804, `UCHE_CACHE_WAYS`(0x385c)=4,
+   `CP_ROQ_THRESHOLDS_2/1`(0x2308/0x2304)=0x010000c0/0x8040362c, `CP_MEM_POOL_SIZE`(0x230c)=128, `CP_AHB_CNTL`(0x2634)=1, `RBBM_PERFCTR_CNTL`(0x1400)=1,
+   `RBBM_INTERFACE_HANG_INT_CNTL`(0x7c)=(1<<30)|0x1fffff, `UCHE_CLIENT_PF`(0x3864)=0x81. (HWCG, UBWC, CP_PROTECT пока пропускаем.)
+4. Микрокод и кольцо: `CP_SQE_INSTR_BASE`(0x2058, 64 бита)=IOVA SQE (`a630_sqe.fw`), `CP_RB_BASE`(0x2000, 64 бита)=IOVA кольца, `CP_RB_CNTL`(0x2008)=default
+   (| NO_UPDATE если нет RPTR-shadow), `CP_RB_RPTR_ADDR`(0x2010, 64 бита) при shadow. Старт: `CP_SQE_CNTL`(0x2020)=1.
+5. Первая команда: PKT7 `CP_ME_INIT`(0x48), 8 слов: 0x2f, 0x3, 0x20000000, 0,0,0,0,0; запись wptr в `CP_RB_WPTR`(0x201c); ждать `rptr==wptr` и RBBM_STATUS idle.
+6. Выход из secure mode: после загрузки zap (G2, но НЕ отдавать обратно) — PKT7 `CP_SET_SECURE_MODE`(0x66) со словом 0; затем тест: PKT7 `CP_MEM_WRITE`(0x3d) в нашу страницу.
+   Заголовок PKT7: `(7<<28) | count | parity(count)<<7 | opcode<<16 | parity(opcode)<<23`.
+- Все обращения GPU к памяти (микрокод, кольцо, цель записи) идут через SMMU CB0: нужны таблицы с этими страницами и привязка потока 0
+  (на этом телефоне S2CR0 читается 0x200ff, библиотека требует ровно FAULT: привязку делаем отдельно с read-back).
+- Порядок проверок на железе: **G3a** только регистры шагов 1–3 (запись и read-back, без CP), **G3b** SMMU + микрокод + кольцо + `CP_ME_INIT`,
+  **G3c** zap остаётся авторизованным, `CP_SET_SECURE_MODE`, `CP_MEM_WRITE`.
